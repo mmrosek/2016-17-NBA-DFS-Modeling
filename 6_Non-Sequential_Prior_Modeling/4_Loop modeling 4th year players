@@ -1,0 +1,287 @@
+import xgboost as xgb
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import GridSearchCV
+from sklearn import preprocessing
+from sklearn import decomposition
+
+from sklearn.cluster import KMeans
+
+# more models
+from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from sklearn import tree
+from sklearn import linear_model
+
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import r2_score
+
+################################################
+
+fourth_year = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/complete_fourth_year_pred_set_2_19.csv')
+
+fourth_year = fourth_year.drop('Unnamed: 0', axis=1)
+
+len(first_year.columns)
+
+len(second_year.columns)
+
+len(third_year.columns)
+
+len(set(second_year.columns) - set(first_year.columns))
+
+len(set(third_year.columns) - set(second_year.columns))
+
+# Converts 'Pos' into a one-hot variable
+fourth_year = pd.get_dummies(fourth_year,columns=['Pos'])
+
+stats = ["fourth_year_('reg_szn_total_fd_pts', '')"]
+#"fourth_year_('reg_szn_total_dk_pts', '')", "fourth_year_('FD_prior_^0.7_of_total', '')", "fourth_year_('DK_prior_^0.7_of_total', '')"]
+
+# Creates shuffled list of indices
+first_played_fourth_year_row = np.argmax(fourth_year.ix[:,stats[0]] > 0)
+
+indices = list(range(len(fourth_year)-first_played_fourth_year_row))
+np.random.shuffle(indices)
+
+# List of columns used for prediction
+predictor_columns = [col for col in fourth_year.columns if ((not 'fourth_year' in col) & (not 'Player' in col) & (not 'Draft' in col) & (not 'From' in col) & (not "Player" in col) & (not "To" in col)) | ('fourth_year_espn_adp' in col) | ('fourth_year_yahoo_adp' in col) | ("fourth_year_season" in col)]
+fourth_year[predictor_columns] = fourth_year[predictor_columns].astype(float)
+
+fourth_year = fourth_year.fillna(value=0)
+
+for stat in stats:
+       
+    # Finds column number of stat we are trying to predict
+    target_col_list = [i for i in range(len(fourth_year.columns)) if stat in fourth_year.columns[i]]
+    target_col_index = int(target_col_list[0])
+    print(stat,target_col_index)
+    
+    #######################################################################
+    
+    ### Scales, centers, and performs PCA on the featurs and splits them into test and train sets
+    features = np.array(fourth_year.ix[:,predictor_columns])
+    
+    # Scales and centers the features
+    features_std = preprocessing.scale(features)
+    
+    percent_of_variance_to_capture = 99
+
+    # Initializes PCA function
+    pca = decomposition.PCA(n_components=features_std.shape[1])
+    
+    # Finds principal components
+    pca.fit(features_std)
+    
+    # Array of the amount of variance captured by each eigenvector
+    var1=np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4)*100)
+    
+    print('Variance captured by first 20 components:')
+    print(var1[:20])
+    
+    # Counts the number of components needed to capture 99.95% of the variance
+    number_of_components = 0
+    var_count = 0
+    for num in var1:
+        
+        number_of_components += 1
+        
+        if num >= percent_of_variance_to_capture:
+            break
+        
+    print("number_of_components = " + str(number_of_components))
+    
+    print('Percent of variance to capture: ' + str(percent_of_variance_to_capture))
+    
+    ###########################################################
+    
+    ### Performs pca on data using the number of components 
+    ###  determined by the process above
+    
+    # Initializes PCA function
+    pca = decomposition.PCA(n_components=number_of_components)
+    
+    # Finds principal components
+    pca.fit(features_std)
+    
+    # Creates new array containing principal components
+    features_std_pca = np.array(pca.fit_transform(features_std))
+    
+    # Adds clusters as a feature
+    clusters = np.array([KMeans(n_clusters=5).fit(features_std_pca).labels_])
+    features_std_pca = np.append(features_std_pca, clusters.T, axis=1)
+    
+    # Separates feature matrix used for training from those from prediction set
+    prediction_set_features_pca = features_std_pca[0:np.argmax(fourth_year.ix[:,target_col_index] > 0)]
+    training_and_testing_features_pca = features_std_pca[np.argmax(fourth_year.ix[:,target_col_index] > 0):]
+    
+    # Creates shuffled list of indices
+    # indices = list(range(len(training_and_testing_features_pca)))
+    # np.random.shuffle(indices)
+    
+    # Creates training and testing sets
+    training_features = np.array(training_and_testing_features_pca[indices])
+    # testing_features = np.array(training_and_testing_features_pca[indices[801:]])
+    
+    #########################################################
+    
+    ### Creates training and testing sets for targets
+    
+    # Creates target vector only for rows of players who have played second season already
+    target = np.array(fourth_year.ix[np.argmax(fourth_year.ix[:,target_col_index] > 0):,fourth_year.columns[target_col_index]])
+    
+    #store mean and variance of training_targets for pre and post processing
+    y_mean = np.mean(target,axis=0)
+    
+    # Have to wrap training targets to prevent 'float has no sqrt' error // Axis=0 to calculate stdev for each column (feature)
+    y_std = np.std(np.float32(target),axis=0)
+    
+    # center and normalize Y values
+    target_std = np.divide(np.subtract(target,y_mean),y_std)
+    
+    # Creates training and testing target vectors
+    training_targets = np.array(target_std[indices])
+    
+    # testing_targets = np.array(target_std[indices[801:]])
+    
+    #####################################################
+    
+    # generating output for XGB
+    print("Trying XGBs")
+    # Using grid search to test many different parameter values
+    grid_search = GridSearchCV(estimator = xgb.XGBRegressor(),
+    	param_grid={'max_depth':[2,3,4],
+    				'learning_rate':[.07,.075,.08,.085,.09,0.95],
+    				'min_child_weight':[4,5,6,7,8,9,10]}, cv = 5)
+    				
+    # Learning Rate --> .07 - .11
+    # Min Child Weight --> 6 - 11
+    				
+    
+    # Finds best possible model for given out range of parameter values passed in previous line
+    grid_search.fit(training_features,training_targets)
+    
+    best_XGB = grid_search.best_estimator_
+    print("\n\nbest XGB:\n" + str(best_XGB.get_params) + "\n\n")
+    #best_XGB.fit(training_features,training_targets)
+    print("XGB best r2:\t" + str(grid_search.best_score_) + '\n')
+    
+    XGB_train_preds = best_XGB.predict(training_features)
+    
+    #XGB_test_preds = best_XGB.predict(testing_features)
+    
+    print('shape ' + str(prediction_set_features_pca.shape))
+    
+    XGB_pred_preds = best_XGB.predict(prediction_set_features_pca)
+    
+    #r2 = r2_score(testing_targets, XGB_test_preds)
+    
+    #print("XGB test r2:\t" + str(r2) + "\n\n")
+    
+    #########################################################################################################
+    
+    # generating output for SVM
+    print("Trying SVMs")
+    grid_search = GridSearchCV(estimator = SVR(),
+    	param_grid={'kernel':['linear'],
+    				'epsilon':[0.2,0.3,0.4,0.5],
+    				'shrinking':[True]}, cv = 5)
+    
+    # Other potential kernels: 'poly', 'rbf', 'sigmoid'
+    
+    grid_search.fit(training_features,training_targets)
+    
+    best_SVM = grid_search.best_estimator_
+    print("\n\nbest SVM:\n" + str(best_SVM.get_params) + "\n\n")
+    #best_SVM.fit(training_features,training_targets)
+    print("SVM best r2:\t" + str(grid_search.best_score_) + "\n")
+    
+    SVM_train_preds = best_SVM.predict(training_features)
+    
+    #SVM_test_preds = best_SVM.predict(testing_features)
+    
+    SVM_pred_preds = best_SVM.predict(prediction_set_features_pca)
+    
+    # #r2 = r2_score(testing_targets, SVM_test_preds)
+    
+    # #print("SVM test r2:\t" + str(r2) + "\n\n")
+    
+    ###################################################################################################
+    
+    # generating output for random forest
+    print("Trying Random Forests")
+    grid_search = GridSearchCV(estimator = RandomForestRegressor(),
+    	param_grid={'n_estimators':[10,15,20,25], 
+    				'min_samples_leaf':[2,4,6,8], 
+    				'max_depth':[5,6,7,8,9], 
+    				'max_features':['auto']}, cv = 5)
+    
+    # Max depth: 5 --> 9
+    # Min samples per leaf: 2 --> 8
+    
+    grid_search.fit(training_features,training_targets)
+    
+    best_RF = grid_search.best_estimator_
+    print("\n\nbest random forest:\n" + str(best_RF.get_params) + "\n\n")
+    #best_RF.fit(training_features,training_targets)
+    print("RF best r2:\t" + str(grid_search.best_score_) + "\n")
+    
+    RF_train_preds = best_RF.predict(training_features)
+    
+    #RF_test_preds = best_RF.predict(testing_features)
+    
+    print('shape ' + str(prediction_set_features_pca.shape))
+    
+    RF_pred_preds = best_RF.predict(prediction_set_features_pca)
+    
+    #r2 = r2_score(testing_targets, RF_test_preds)
+    
+    #print("RF test r2:\t" + str(r2) + "\n\n")
+    
+    ######################################################################################
+    
+    if stat == stats[0]:
+    
+        # Shuffles original data set to match shuffling done for training 
+    
+        fourth_year_prediction = fourth_year[0:np.argmax(fourth_year.ix[:,target_col_index] > 0)]
+    
+        fourth_year_train_test = fourth_year[np.argmax(fourth_year.ix[:,target_col_index] > 0):]
+    
+        fourth_year_train_test.reset_index(inplace=True)
+    
+        fourth_year_train_test_shuffled = fourth_year_train_test.ix[indices,:]
+    
+        fourth_year_ready_for_prediction_append = fourth_year_prediction.append(fourth_year_train_test_shuffled)
+    
+    ######################################################################################
+    
+    ##### Creates new array containing only predicted values from 3 models to be fed into decision tree
+    
+    # Concatenates predictions for prediction, training, and testing sets into one array
+    complete_xgb_preds = np.concatenate((XGB_pred_preds,XGB_train_preds), axis=0)
+    
+    # Undoing normalization
+    complete_xgb_preds_denormalized = np.add(np.multiply(complete_xgb_preds, y_std), y_mean)
+    
+    # # Concatenates predictions for prediction, training, and testing sets into one array
+    # complete_svm_preds = np.concatenate((SVM_pred_preds,SVM_train_preds), axis=0)
+    
+    # # Undoing normalization
+    # complete_svm_preds_denormalized = np.add(np.multiply(complete_svm_preds, y_std), y_mean)
+    
+    # Concatenates predictions for prediction, training, and testing sets into one array
+    complete_rf_preds = np.concatenate((RF_pred_preds,RF_train_preds), axis=0)
+    
+    # Undoing normalization
+    complete_rf_preds_denormalized = np.add(np.multiply(complete_rf_preds, y_std), y_mean)
+    
+    # Appends prediction arrays to dataset
+    fourth_year_ready_for_prediction_append['xgb_pred_{}'.format(stat)] = complete_xgb_preds_denormalized
+    #fourth_year_ready_for_prediction_append['svm_pred_{}'.format(stat)] = complete_svm_preds_denormalized
+    fourth_year_ready_for_prediction_append['rf_pred_{}'.format(stat)] = complete_rf_preds_denormalized
+    fourth_year_ready_for_prediction_append['avg_pred_{}'.format(stat)] = (complete_rf_preds_denormalized + complete_xgb_preds_denormalized)/2
+
+
+fourth_year_ready_for_prediction_append.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fourth_year_priors_2_20.csv")
