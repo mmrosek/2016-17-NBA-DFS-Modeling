@@ -1,0 +1,81 @@
+from collections import defaultdict
+
+#######################################################################
+
+### Notes ###
+
+# John Holland does not make it into df_zero_rows (aka subset) --> No worries
+# Dorell Wright and Dwayne Jones have one less block in subset than predicted by all_seasons wide format b/c they only played in the playoffs in their last season and their "To" columns doesnt reflect that
+
+
+# Creates dictionary containing player:season_count for subset data set
+player_counts = defaultdict(int)
+row = 0
+for row in range(len(df_zero_rows)):
+        player_counts[df_zero_rows.ix[row,'Player']]+=1
+block_count_list = [count/19 for count in player_counts.values()]
+player_names = player_counts.keys()
+player_count_dict = {player:count for (player,count) in zip(player_names,block_count_list)}
+
+player_counts
+
+# Creates dictionary containing player:season_count for data set containing one row for each season
+player_counts_all_seasons = defaultdict(int)
+row = 0
+for row in range(len(df)):
+        player_counts_all_seasons[df.ix[row,'Player']]+=1
+block_count_list_2 = [count for count in player_counts_all_seasons.values()]
+player_names_2 = player_counts_all_seasons.keys()
+player_count_dict_all = {player:count for (player,count) in zip(player_names_2,block_count_list_2)}
+
+
+subset_players = player_count_dict.keys()
+# Creates list of players that have more years in subset than they do in set containing one row per season
+too_many_in_subset = [player for player in subset_players if player_count_dict[player] > player_count_dict_all[player]]
+
+# Creates list of players that have less years in subset than they do in set containing one row per season
+not_enough_in_subset = [player for player in subset_players if player_count_dict[player] < player_count_dict_all[player]]
+
+not_enough_in_subset
+
+len(too_many_in_subset)
+
+# Creates count of how many seasons were spanned by players in too_many_in_subset in all_season (one row per season)
+years_in_all_seasons_from_too_many_in_subset = 0 
+for player in too_many_in_subset:
+    years_in_all_seasons_from_too_many_in_subset += player_count_dict_all[player]
+
+# Creates count of how many seasons were spanned by players in too_many_in_subset in subset
+years_in_subset_from_too_many_in_subset = 0
+for player in too_many_in_subset:
+    years_in_subset_from_too_many_in_subset += player_count_dict[player]
+
+# Calculates number of extra rows in subset contributed by players in too_many_in_subset
+extra_rows_in_subset = (years_in_subset_from_too_many_in_subset - years_in_all_seasons_from_too_many_in_subset)*19
+
+
+# Creates count of how many seasons were spanned by players in not_enough_in_subset in all_season (one row per season)
+years_in_all_seasons_from_not_enough_in_subset = 0 
+for player in not_enough_in_subset:
+    years_in_all_seasons_from_not_enough_in_subset += player_count_dict_all[player]
+
+# Creates count of how many seasons were spanned by players in not_enough_in_subset in subset
+years_in_subset_from_not_enough_in_subset = 0
+for player in not_enough_in_subset:
+    years_in_subset_from_not_enough_in_subset += player_count_dict[player]
+
+# Calculates number of missing rows in subset contributed by players in not_enough_in_subset
+missing_rows_in_subset = (years_in_all_seasons_from_not_enough_in_subset - years_in_subset_from_not_enough_in_subset) * 19
+
+# Calculates number of rows missing from subset contributed by players in all seasons that do not exist in subset (played 1998 only)
+all_seasons_players = player_count_dict_all.keys()
+players_in_all_seasons_not_in_subset = [player for player in all_seasons_players if player not in subset_players]
+years_missing_from_subset_cus_player_not_included = 0
+for player in players_in_all_seasons_not_in_subset:
+    years_missing_from_subset_cus_player_not_included += player_count_dict_all[player]
+
+
+# Rows in subset 
+len(df_zero_rows)-extra_rows_in_subset+missing_rows_in_subset+(19)
+
+

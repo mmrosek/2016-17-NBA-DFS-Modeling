@@ -1,0 +1,230 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+
+### Make sure the below step was completed at end of 'flip all seasons wide calculate wtd avgs and drop gamelog data' script
+# After writing the dataframe to csv, go into excel and delete two empty rows left over from multi-index and save as data_for_lstm_prior_no_multi_index.csv
+
+years_rows = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/data_for_lstm_prior_no_multi_index.csv")
+
+#################################################################################################
+
+#################################################################################################
+
+### Merging ADP data
+
+# Importing ADP data
+
+for year in range(10,17):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/20{0}-{1}_nba_adp.csv".format(year,year+1))
+    one_year["season"] = 2000+year
+    if year == 10:
+        all_adp=one_year
+    else:
+        all_adp = all_adp.append(one_year)
+
+adp_wide=pd.pivot_table(all_adp, index=["Name", 'season'], values=['Y!Adp9','ESPNAdp8','CBSAdp',"FanTraxADP"])
+
+adp_wide = adp_wide.reset_index()
+
+# Merge Step
+years_rows = pd.merge(years_rows, adp_wide, left_on=['Player', 'season'], right_on=['Name', 'season'], how='left')
+
+# Drops "Name" column
+years_rows.drop("Name", axis=1, inplace = True)
+
+del adp_wide
+del all_adp
+del one_year
+
+###################################################################################################
+
+### Adding stats from following season into row of previous season for LSTM
+
+stats = ['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GmSc','MP','ORB','PF','STL','TOV',"TRB"]
+
+# Create list of column titles for stats from following season
+new_column_titles = ["next_year_{}".format(title) for title in years_rows.columns if (title !="Player") & (title != "season")]
+
+# Creates new empty columns
+for title in new_column_titles:
+    years_rows[title]=''
+
+### Calculates the column numbers for the new columns --> should be of length 176
+new_columns = list(range(np.argmax(years_rows.columns.str.contains("next_year")),len(years_rows.columns)))
+
+### Calculates the column numbers for the original columns (.lower() b/c all szn stats are lower case) --> should be of length 176
+old_columns = list(range(np.argmax(years_rows.columns.str.contains(stats[0].lower())),np.argmax(years_rows.columns.str.contains("next_year"))))
+
+
+# Fill new columns with data from old columns of following year
+for row in range(len(years_rows)):
+    if years_rows.ix[row,'season']==1997:
+        print(row)
+        years_rows.ix[row:row+17,new_columns]=np.array(years_rows.ix[row+1:row+18,old_columns])
+    else:
+        continue
+
+############################################################################################
+
+###### Merge draft, adp, and ht/wt data with prior_data_with_next_year_in_row
+
+### Merges data set of all players to ever play with years_as_rows
+
+### Reads in dataset of all players to play in NBA history with relevant duplicates fixed
+players_full = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/every_player_in_nba_history_no_duplicates_for_1998_plus.csv")
+
+years_as_rows_size = pd.merge(years_rows, players_full, on='Player', how='left')
+
+################################################################################################
+################################################################################################
+
+### Merges years_as_rows with ht/wt with draft data
+
+# Reads in draft data
+draft=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_1995_to_2015.csv")
+
+### Duplicate Players in the Draft data set:
+# Corey Brewer
+# Marcus Williams
+# Marcus Thornton
+
+# Returns rows containing duplicated players
+
+#draft.Player.duplicated()
+#test_mask = draft.Player.duplicated()
+#draft[test_mask]
+
+################################################################################################
+
+### Removing/editing duplicated players
+
+# Remove irrelevant Marcus Thornton from draft data set
+
+thornton_mask = (draft.Player == "Marcus Thornton") & (draft.Pick == 45)
+
+draft=draft[~thornton_mask]
+
+# Remove irrelevant Corey Brewer from draft data set
+
+brewer_mask = (draft.Player == "Corey Brewer") & (draft.Pick == 51)
+
+draft=draft[~brewer_mask]
+
+#################################################################################################
+
+### Change name of "Marcus Williams" to "Marcus Elliott Williams" to mirror change made to "wide"
+
+williams_mask = (draft.Player == "Marcus Williams") & (draft.Pick == 33)
+
+draft.ix[williams_mask,"Player"]="Marcus Elliott Williams"
+
+#################################################################################################
+
+### Merge with draft data
+
+years_rows_size_draft = pd.merge(years_as_rows_size, draft, on="Player", how='left')
+
+#################################################################################################
+#################################################################################################
+
+### Calculating age for each player for each year at start of season (each row essentially)
+
+birthday_vector = pd.to_datetime(years_rows_size_draft['Birth Date'])
+
+# Calculates vector of "season" column as datetime object
+season_vector = pd.to_datetime(years_rows_size_draft['season'], yearfirst=True, format="%Y")
+
+# Accounts for difference in season_vector and start of actual season (season_vector starts on Jan. 1)
+days_from_jan_1_to_start_of_season = datetime.timedelta(days = 300)
+
+# Creates vector of datetime objects containing age in number of days at start of season
+age_at_start_of_season_vector = (season_vector - birthday_vector) + days_from_jan_1_to_start_of_season
+
+# Creates list of ages at start of season without the datetime formatting
+formatted_age_list = [str(age)[:5] if len(str(age))==19 else str(age)[:4] for age in age_at_start_of_season_vector]
+
+# Creates new column for age at start of season
+years_rows_size_draft['age_at_start_of_season'] = formatted_age_list
+
+# Removes unnamed columns
+unnamed_cols = list(years_rows_size_draft.columns[years_rows_size_draft.columns.str.contains("Unnamed")])
+years_rows_size_draft.drop(unnamed_cols,axis=1,inplace=True)
+
+# Removes unwanted 'Ht' column
+years_rows_size_draft.drop('Ht',axis=1,inplace=True)
+
+########################################################
+
+### Rearranging columns
+
+# Creates list of column names
+list_of_col_names = years_rows_size_draft.columns.tolist()
+
+# Finds first and last column number for columns describing age, weight, draft pick, etc. that are located at far right of data set 
+weight_draft_age_cols = [col_num for col_num in range(len(list_of_col_names)) if (list_of_col_names[col_num] == "From") | (list_of_col_names[col_num] == list_of_col_names[len(list_of_col_names)-1])]
+
+#Creates list of column numbers describing age, weight, draft pick, etc. that are located at far right of data set 
+weight_draft_age_col_range = list(range(weight_draft_age_cols[0],int(weight_draft_age_cols[1])+1))
+
+# Creates list of column numbers that contain "next_year"
+next_year_cols = [col_num for col_num in range(len(list_of_col_names)) if "next_year" in list_of_col_names[col_num]]
+
+# Rearranges columns as desired into a list
+updated_list_of_col_names = list_of_col_names[:np.min(next_year_cols)] + list_of_col_names[np.min(weight_draft_age_col_range):np.max(weight_draft_age_col_range)+1] + list_of_col_names[np.min(next_year_cols):np.max(next_year_cols)+1]
+
+# Creates new df with correctly arranged columns
+final_df = years_rows_size_draft[updated_list_of_col_names]
+
+final_df.to_csv("/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/fixing_dtypes_rnn_prior.csv")
+
+############################################################################
+############################################################################
+
+### Adding careerm minutes and career games played to final_RNN_prior_dataset
+
+# Writing final_df to csv changes object types necessary for computations below
+rnn_df = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/fixing_dtypes_rnn_prior.csv')
+
+# Create new columns
+rnn_df['career_reg_szn_minutes_played'] = 0
+rnn_df['career_games_played'] = 0
+
+### Modifies NA cells ###
+
+# Fills NA cells with 0
+rnn_df.ix[:,'full_szn_games_played'] = rnn_df.ix[:,'full_szn_games_played'].fillna(value=0)
+
+# Fills NA cells with 0
+rnn_df.ix[:,'reg_szn_total_mp'] = rnn_df.ix[:,'reg_szn_total_mp'].fillna(value=0)
+
+# Identifies rookie season row
+#np.argmax(subset.next_year_full_szn_games_played > 0)+1
+
+# Identifies last season row
+#np.argmax(subset[::-1].full_szn_games_played > 0)
+
+for player in rnn_df.Player.unique():
+    print(player)
+    #Creates a range corresponding to the number of seasons 'player' played in the nba
+    for row in range(np.argmax(rnn_df.ix[rnn_df.Player == player,'next_year_full_szn_games_played'] > 0)+1,np.argmax(rnn_df.ix[rnn_df.Player == player,'full_szn_games_played'][::-1] > 0)+1):
+        #Sets career games played and career minutes equal to the games played + career games played from previous row and same for minutes
+        rnn_df.ix[((rnn_df.Player == player) & (rnn_df.index == row)),['career_games_played','career_reg_szn_minutes_played']] = np.array([float(rnn_df.ix[((rnn_df.Player == player) & (rnn_df.index == row)),'full_szn_games_played'])+float(rnn_df.ix[((rnn_df.Player == player) & (rnn_df.index == row-1)),'career_games_played']),float(rnn_df.ix[((rnn_df.Player == player) & (rnn_df.index == row)),'reg_szn_total_mp'])+float(rnn_df.ix[((rnn_df.Player == player) & (rnn_df.index == row-1)),'career_reg_szn_minutes_played'])])
+
+#######################################################################################
+
+# Creates list of columns that drops unwanted columns and moves career minutes/games in between To and Pos columns
+new_col_order = [2]
+new_col_order.append(1)
+new_col_order.extend((range(3,np.argmax(rnn_df.columns.str.contains('To'))+1)))
+new_col_order.extend([np.argmax(rnn_df.columns.str.contains('career_games_played')),np.argmax(rnn_df.columns.str.contains('career_reg_szn_minutes_played'))])
+new_col_order.extend(list(range(np.argmax(rnn_df.columns.str.contains("Pos")),len(rnn_df.columns)-2))) # -2 from len to account for 2 columns that were relocated (career games and career minutes)
+
+#rnn_df.columns[new_col_order][150:200] # Should include To, career games/minutes, Pos
+
+rnn_final_df = rnn_df[new_col_order]
+
+#rnn_final_df.to_csv('/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/rnn_prior_data_with_career_games_mins.csv')
+
+# len(rnn_final_df) should = 23940

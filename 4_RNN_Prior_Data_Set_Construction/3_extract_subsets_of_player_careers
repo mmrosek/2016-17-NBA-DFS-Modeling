@@ -1,0 +1,195 @@
+import pandas as pd
+import numpy as np
+import time
+import itertools
+
+### Reads in data frame with each player corresponding to an 19 row block
+start=time.time()
+each_player_once = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/rnn_prior_data_with_career_games_mins.csv")
+
+###################################################################################################################
+
+### Pre-processing steps that move columns, fill in missing fields and turns Position into a numerical variable ###
+
+# Drops "College" and 'Birth Date' column
+each_player_once.drop("College", axis=1, inplace = True)
+each_player_once.drop("Birth Date", axis=1, inplace=True)
+
+## Creates new binary column for whether or not a player was drafted
+each_player_once['drafted?'] = 1 * ~each_player_once.Pick.isnull()
+
+# Creates list of columns that drops unwanted columns and moves 'next_year_adp' columns more to the left to be used as predictor variables
+cols_to_keep = list(range(1,np.argmax(each_player_once.columns.str.contains('From')-1)))
+cols_to_keep.extend(list(range(np.argmax(each_player_once.columns.str.contains('next_year_CBSAdp')),len(each_player_once.columns))))
+cols_to_keep.extend(list(range(np.argmax(each_player_once.columns.str.contains('From')),np.argmax(each_player_once.columns.str.contains('age_at_start_of_season'))+1)))
+cols_to_keep.extend(list(range(np.argmax(each_player_once.columns.str.contains('next_year_reg_szn_total_FD_pts')),np.argmax(each_player_once.columns.str.contains('next_year_CBSAdp')))))
+
+# Removes unwanted "next year" columns
+each_player_once = each_player_once.ix[:,cols_to_keep]
+
+del cols_to_keep
+
+# Changes Position from a categorical to quantitative variable
+each_player_once.ix[each_player_once.Pos == 'PG','Pos'] = 1
+each_player_once.ix[each_player_once.Pos == 'G','Pos'] = 1.75
+each_player_once.ix[each_player_once.Pos == 'G-F','Pos'] = 2.5
+each_player_once.ix[each_player_once.Pos == 'F-G','Pos'] = 3
+each_player_once.ix[each_player_once.Pos == 'F', 'Pos'] = 3.75
+each_player_once.ix[each_player_once.Pos == 'F-C', 'Pos'] = 4.25
+each_player_once.ix[each_player_once.Pos == 'C-F', 'Pos'] = 4.5
+each_player_once.ix[each_player_once.Pos == 'C', 'Pos'] = 5
+
+#### Modifies NA cells ####
+
+# Fills NA "Pick" cells with 1000
+each_player_once.ix[:,'Pick'] = each_player_once.ix[:,'Pick'].fillna(value=1000)
+
+# Fills NA ADP cells with 1000 (Create variable indicating whether ADP stats were available?)
+each_player_once.ix[:,['CBSAdp','ESPNAdp8', 'FanTraxADP', 'Y!Adp9','next_year_CBSAdp','next_year_ESPNAdp8', 'next_year_FanTraxADP', 'next_year_Y!Adp9']] = each_player_once.ix[:,['CBSAdp','ESPNAdp8', 'FanTraxADP', 'Y!Adp9','next_year_CBSAdp','next_year_ESPNAdp8', 'next_year_FanTraxADP', 'next_year_Y!Adp9']].fillna(value=1000)
+
+# Fills remainig NA cells with 0
+each_player_once = each_player_once.fillna(value=0)
+
+############################
+
+### Zeroes out rows unsuitable for prediction
+
+# Subsets dataset to include rows that contain data before a player entered the league
+before_entry_mask = (each_player_once.From - each_player_once.season) > 2
+
+# Zeroes rows from before player entered the league
+each_player_once.ix[before_entry_mask, 2:] = 0
+
+# Subsets dataset to only rows that contain data from after a player left the league
+after_leaving_mask = (each_player_once.To - each_player_once.season) < 1
+
+# Zeroes rows from before player entered the league
+each_player_once.ix[after_leaving_mask, 2:] = 0
+
+#del before_entry_mask
+del after_leaving_mask
+
+# Subsets dataset to include rows for which the player didn't play in the current or next season
+skip_year_mask = (each_player_once.season != 2015) & (each_player_once.full_szn_games_played == 0) & (each_player_once.next_year_full_szn_games_played == 0)
+
+# Zeros out all unusable rows
+each_player_once.ix[skip_year_mask,2:] = 0
+
+del skip_year_mask
+
+#################################################################################
+#################################################################################
+
+### Creates 2 column df (ID, Player) ###
+
+player_id_df = pd.DataFrame(columns=['ID','Player'], index=[0])
+players = each_player_once.Player.unique()
+for row in range(len(players)):
+    player_id_df.ix[row,['ID','Player']]=[int(row+1),players[row]]
+
+# Adds ID column to each_player_once 
+each_player_once_id = pd.merge(each_player_once,player_id_df,on='Player',how='left')
+
+# Drops player column
+each_player_once_id.drop('Player', inplace=True, axis=1)
+
+# Creates new order for columns
+new_cols=[each_player_once_id.columns[0],each_player_once_id.columns[len(each_player_once_id.columns)-1]]
+new_cols.extend(each_player_once_id.columns[1:len(each_player_once_id.columns)-1])
+
+# Assigns new column order
+each_player_once_id=each_player_once_id[new_cols]
+
+########################################################################################
+########################################################################################
+
+#### Converts dataframe to a 3D numpy array to allow for more efficient manipulation ####
+
+# .iloc indexes by index number (exclusive on stop index), .ix indexes by label (inclusive on stop index)
+player_array = np.array(each_player_once_id)
+
+# Converts all dtypes in array to float
+player_array = player_array.astype('float')
+
+# .reshape(slices, rows, columns)
+player_array = player_array.reshape(len(player_array)/19,19,player_array[0].shape[0])
+
+######################################################################################
+
+# References the correct rows in each slice to be zeroed
+
+#player_array[list(range(player_array.shape[0])),[((player_array.shape[1]-1)-np.argmax(np.fliplr(np.where(player_array[:,:,3:].max(axis=2),True,False)), axis=1)).tolist()]]
+
+
+######################################################################################
+
+for row in range(19):
+    
+    # Zeroes out last non-zero row in each slice 
+    player_array[list(range(player_array.shape[0])),[((player_array.shape[1]-1)-np.argmax(np.fliplr(np.where(player_array[:,:,3:].max(axis=2),True,False)), axis=1)).tolist()]]=0
+    
+    # Creates list containing index for each slice that is not all zeros
+    list_of_non_zero_slices = [array_index for array_index in range(player_array.shape[0]) if not np.any(player_array[array_index,:,3:])==0.0]
+
+    if row == 0:
+
+        all_non_zero_slices_array = player_array[list_of_non_zero_slices]
+
+    else:
+
+        all_non_zero_slices_array = np.append(all_non_zero_slices_array,player_array[list_of_non_zero_slices], axis=0)
+
+# Returns the column number in each_player_once_id for 'next_year_full_szn_games_played'
+#np.argmax(each_player_once_id.columns.str.contains("next_year_full_szn_games_played"))
+
+# Returns T/F vector of slices in which the last non-zero row does not contain data for next season (unusable)
+usable_slices_array = np.array(all_non_zero_slices_array[list(range(all_non_zero_slices_array.shape[0])),
+    [((all_non_zero_slices_array.shape[1]-1)-np.argmax(np.fliplr(np.where(all_non_zero_slices_array[:,:,3:].max(axis=2),True,False)), axis=1)).tolist()],
+    list(itertools.repeat(np.argmax(each_player_once_id.columns.str.contains("next_year_full_szn_games_played")), all_non_zero_slices_array.shape[0]))] != 0)
+
+# Creates list containing slice index for each usable slice in all_non_zero_slices_array
+usable_slice_indices = [index for index in range(len(usable_slices_array[0])) if usable_slices_array[0][index]]
+
+# unusable_slices_array = np.array(all_non_zero_slices_array[list(range(all_non_zero_slices_array.shape[0])),
+#     [((all_non_zero_slices_array.shape[1]-1)-np.argmax(np.fliplr(np.where(all_non_zero_slices_array[:,:,3:].max(axis=2),True,False)), axis=1)).tolist()],
+#     list(itertools.repeat(np.argmax(each_player_once_id.columns.str.contains("next_year_full_szn_games_played")), all_non_zero_slices_array.shape[0]))] == 0)
+
+# Creates list containing slice index for each usable slice in all_non_zero_slices_array
+#unusable_slice_indices = [index for index in range(len(unusable_slices_array[0])) if unusable_slices_array[0][index]]
+
+# Only keeps usable slices
+all_non_zero_slices_array = all_non_zero_slices_array[usable_slice_indices]
+
+# 3D --> 2D
+array_no_slices = all_non_zero_slices_array.reshape(-1, player_array.shape[2])
+
+# Converts array into df
+df_zero_rows = pd.DataFrame(array_no_slices, columns=each_player_once_id.columns)
+
+# Creates list containing sequence of seasons (1998-2015) for each 19 row block
+seasons_column = [season for row in range(int(len(df_zero_rows)/19)) for season in range(1997,2016)]    
+
+# Resets values in 'season' columns
+df_zero_rows['season'] = np.array(seasons_column)
+
+### Resets the ID values that were set to 0 the values within the corresponding 19 row block
+#start = time.time()
+first_row=0
+for last_row_in_block in range(19,len(df_zero_rows)+1,19):
+    #Sets id equal to value of id contained in id column in each 19 row block != 0
+    df_zero_rows.ix[first_row:last_row_in_block-1,'ID'] = df_zero_rows.ix[first_row:last_row_in_block-1,'ID'].unique()[df_zero_rows.ix[first_row:last_row_in_block-1,'ID'].unique() != 0][0]
+    first_row += 19
+
+
+# Adds back player column
+df_zero_rows = pd.merge(df_zero_rows,player_id_df, on='ID', how='inner')
+
+# Re-orders columns to put "Player" as left-most column
+new_col_order = [np.argmax(df_zero_rows.columns.str.contains("Player"))]
+new_col_order.extend(list(range(0,np.argmax(df_zero_rows.columns.str.contains("Player")))))
+
+finished_df = df_zero_rows[new_col_order]
+end = time.time()
+print(end-start)
+
+#finished_df.to_csv('/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/legit_rnn_prior_training_set.csv')

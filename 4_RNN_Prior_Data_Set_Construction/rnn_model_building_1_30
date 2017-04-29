@@ -1,0 +1,176 @@
+import keras
+import numpy as np
+from keras.models import Sequential
+from keras.layers import *
+from keras.optimizers import RMSprop
+import time
+import pandas as pd
+from sklearn import preprocessing
+from sklearn.preprocessing import MinMaxScaler
+from sklearn import decomposition
+
+# Read in df
+train = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/legit_rnn_prior_training_set.csv')
+train = train.drop(['Unnamed: 0','ID'],axis=1)
+
+# Convert to numpy array
+training_data = np.array(train)
+
+# Returns column of last feature used for prediction
+last_feature = np.argmax(train.columns.str.contains("age_at_start_of_season"))
+
+
+#training_rows = int(len(training_data)/2)
+
+
+# Creates list of random slice indices
+
+slice_indices = [index for index in range(int(len(train)/19))]
+
+np.random.shuffle(slice_indices)
+
+########################################
+
+# Set percentage of slices to be trained on and tested on
+
+train_percentage = 0.8
+
+train_slices = slice_indices[:int((train_percentage*(len(slice_indices)-1)))]
+
+test_slices = slice_indices[int((train_percentage*(len(slice_indices)-1))):]
+
+#########################################
+
+# Features
+X = training_data[:, 3:196]	#2d array of all player data
+
+# Scales and centers the data
+X = preprocessing.scale(X)
+
+#############################################################################
+
+### Feature Selection
+#import matplotlib.pyplot as plt
+#pca = decomposition.PCA(n_components=50)
+#pca.fit(X)
+#The amount of variance that each PC explains
+#var= pca.explained_variance_ratio_
+#Cumulative Variance explained by number of components
+#var1=np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4)*100)
+
+# Initializes PCA function
+pca = decomposition.PCA(n_components=20)
+
+# Finds principal components
+pca.fit(X)
+
+# Creates new array containing principal components
+X1=pca.fit_transform(X)
+
+# Converts X from a 2D to a 3D array
+X = X1.reshape(int(len(X)/19),19,X1[0].shape[0])
+
+# Creates train and test subsets of feature arrays
+X_test = X[test_slices]
+X_train = X[train_slices]
+
+##################################################################################
+
+# Variables being predicted
+Y = training_data[:, last_feature+1:]	#a and b are start and end of values to predict.
+
+# Converts floating point 0.0 to 0
+Y[np.where(Y<0.00001,True,False)]=0
+
+# Converts Y from a 2D to a 3D array
+Y = Y.reshape(int(len(Y)/19),19,Y[0].shape[0])
+
+y_new = []
+# Iterates through each slice and appends the last nonzero row to a list
+for block in range(Y.shape[0]):
+    # Appends last row in each slice that is not all zeros to the list
+    y_new.append(Y[block,np.max(np.where(Y[block].any(axis=1))),:])
+
+# Creates new array containing vectors of values being predicted by a given slice
+Y = np.array(y_new)
+
+#store mean and variance of Y for pre and post processing
+y_mean = np.mean(Y,axis=0)
+
+# Have to wrap Y to prevent 'float has no sqrt' error // Axis=0 to calculate stdev for each column (feature)
+y_std = np.std(np.float64(Y),axis=0)
+
+# center and normalize Y values
+Y = np.divide(np.subtract(Y,y_mean),y_std)
+
+# Creates training and testing subsets
+Y_test = Y[test_slices]
+Y_train = Y[train_slices]
+
+#############################################
+
+#defining our model
+model = Sequential([
+	#mask our padding rows so that they don’t bias the model
+	Masking(mask_value=0, input_shape=(19, X_train[0].shape[1])),
+	#hidden layer
+	LSTM(256, return_sequences=True),
+	Activation('relu'),
+	#output layer
+	LSTM(Y[0].shape[0]),
+	Activation('linear'),
+])
+
+#build graph, define optimizer and cost function. 
+#Cost here is mean squared error between predicted and actual values.
+model.compile(optimizer=RMSprop(lr=0.01),loss='mse', metrics = ['mean_absolute_percentage_error'])
+
+#train the neural net
+start = time.time()
+model.fit(X_train, Y_train, nb_epoch=5, batch_size=752, validation_split = 0.1)
+end = time.time()
+print("Training took " + str(end-start) + ' seconds')
+
+# Evaluates model on test set
+print("Mod_eval",model.evaluate(X_test,Y_test))
+
+# Prediction results
+# start = time.time()
+# output = model.predict(X)
+# end = time.time()
+# print("Prediction took " + str(end-start) + ' seconds') 
+
+# # Undoing normalization
+# output = np.add(np.multiply(output, y_std), y_mean)
+
+# # Undoing normalization
+# Y = np.add(np.multiply(Y, y_std), y_mean)
+
+# output_df = pd.DataFrame(output)
+# Y_df = pd.DataFrame(Y)
+
+# output_df.ix[:100,:].to_csv("/Users/Miller/Desktop/output.csv")
+
+# Y_df.ix[:100,:].to_csv('/Users/Miller/Desktop/.original_y.csv')
+
+##################################################################
+# fake = np.array([[1,2,1],[3,0,4],[0,0,0],[0.0,0,0]])
+
+# # Identifies the highest indexed row that does not contain all zeros
+# np.max(np.where(fake.any(axis=1))[0])
+
+# # Tests for whether a row contains all zeros
+# fake.any(axis=1)
+
+# # tests for whether a row contains one or more zeros
+# fake.all(axis=1)
+####################################################################
+
+###################################
+
+# Writes 3d array to txt file
+#np.save("/Users/Miller/Desktop/threedarray.txt",test)
+
+# Reads 3d array from text file
+#hope = np.load('/Users/Miller/Desktop/threedarray.txt.npy')
+#################################

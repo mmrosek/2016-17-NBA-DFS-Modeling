@@ -1,0 +1,149 @@
+import pandas as pd
+import numpy as np
+import itertools
+
+each_player_once = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/rnn_prior_data_with_career_games_mins.csv")
+
+###################################################################################################################
+### Pre-processing steps that move columns, fill in missing fields and converts Position into a numerical variable ###
+
+# Drops "College" and 'Birth Date' column
+each_player_once.drop("College", axis=1, inplace = True)
+each_player_once.drop("Birth Date", axis=1, inplace=True)
+
+## Creates new binary column for whether or not a player was drafted
+each_player_once['drafted?'] = 1 * ~each_player_once.Pick.isnull()
+
+# Creates list of columns that drops unwanted columns and moves 'next_year_adp' columns more to the left to be used as predictor variables
+cols_to_keep = list(range(1,np.argmax(each_player_once.columns.str.contains('From')-1)))
+cols_to_keep.extend(list(range(np.argmax(each_player_once.columns.str.contains('next_year_CBSAdp')),len(each_player_once.columns))))
+cols_to_keep.extend(list(range(np.argmax(each_player_once.columns.str.contains('From')),np.argmax(each_player_once.columns.str.contains('age_at_start_of_season'))+1)))
+cols_to_keep.extend(list(range(np.argmax(each_player_once.columns.str.contains('next_year_reg_szn_total_FD_pts')),np.argmax(each_player_once.columns.str.contains('next_year_CBSAdp')))))
+
+# Removes unwanted "next year" columns
+each_player_once = each_player_once.ix[:,cols_to_keep]
+
+del cols_to_keep
+
+# Changes Position from a categorical to quantitative variable
+each_player_once.ix[each_player_once.Pos == 'PG','Pos'] = 1
+each_player_once.ix[each_player_once.Pos == 'G','Pos'] = 1.75
+each_player_once.ix[each_player_once.Pos == 'G-F','Pos'] = 2.5
+each_player_once.ix[each_player_once.Pos == 'F-G','Pos'] = 3
+each_player_once.ix[each_player_once.Pos == 'F', 'Pos'] = 3.75
+each_player_once.ix[each_player_once.Pos == 'F-C', 'Pos'] = 4.25
+each_player_once.ix[each_player_once.Pos == 'C-F', 'Pos'] = 4.5
+each_player_once.ix[each_player_once.Pos == 'C', 'Pos'] = 5
+
+#### Modifies NA cells ####
+
+# Fills NA "Pick" cells with 1000
+each_player_once.ix[:,'Pick'] = each_player_once.ix[:,'Pick'].fillna(value=1000)
+
+# Fills NA ADP cells with 1000 (Create variable indicating whether ADP stats were available?)
+each_player_once.ix[:,['CBSAdp','ESPNAdp8', 'FanTraxADP', 'Y!Adp9','next_year_CBSAdp','next_year_ESPNAdp8', 'next_year_FanTraxADP', 'next_year_Y!Adp9']] = each_player_once.ix[:,['CBSAdp','ESPNAdp8', 'FanTraxADP', 'Y!Adp9','next_year_CBSAdp','next_year_ESPNAdp8', 'next_year_FanTraxADP', 'next_year_Y!Adp9']].fillna(value=1000)
+
+# Fills remainig NA cells with 0
+each_player_once = each_player_once.fillna(value=0)
+
+############################################################################################################
+######################################################################################################
+
+### Creates prediction set minus rookies
+prediction_set_missing_rookies = each_player_once[(each_player_once.To == 2017)]
+
+#########################
+
+# Reads in rookie data 
+
+draft_2016_picks = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_2016.csv")
+draft_2016_picks=draft_2016_picks.drop(draft_2016_picks.columns[draft_2016_picks.columns.str.contains('Unnamed')],axis=1)
+
+combine_2016 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_combine_2016.csv")
+combine_2016=combine_2016.drop(combine_2016.columns[4:],axis=1)
+
+### Splits 'Player' columns into First,Last,Position
+first_name=[]
+last_name=[]
+position=[]
+split_names_and_positions = np.array(combine_2016.Player.str.split())
+# Iterates through rows of 'Player' column in combine data set and splits it into name and position
+for row in range(len(split_names_and_positions)):
+    if len(split_names_and_positions[row]) == 3:
+        first_name.append(split_names_and_positions[row][0])
+        last_name.append(split_names_and_positions[row][1])
+        position.append(split_names_and_positions[row][2])
+    else:
+        if len(split_names_and_positions[row][3]) == 2:
+            first_name.append(split_names_and_positions[row][0])
+            last_name.append(str(split_names_and_positions[row][1]) + " " + str(split_names_and_positions[row][2]))
+            position.append(split_names_and_positions[row][3])
+        else:
+            first_name.append(split_names_and_positions[row][0])
+            last_name.append(split_names_and_positions[row][1])
+            position.append(split_names_and_positions[row][2])
+    
+full_names = [(str(first) + " " + str(last)) for first,last in zip(first_name,last_name)]
+
+# Fixes Brandon Ingram
+position=np.array(position)
+
+position[np.array(position)=='(unofficial)'] = 'SF'
+
+# Creates new columns
+combine_2016['Name']=np.array(full_names)
+
+combine_2016['Position']=position
+
+# Merge combine and draft data
+one_row_per_rookie = pd.merge(draft_2016_picks,combine_2016, left_on='Player', right_on='Name', how='inner')
+
+# Initializes df to be filled
+block_per_rookie=one_row_per_rookie[1:10]
+
+seasons = list(range(1997,2016))
+
+block_per_rookie['season']=''
+
+#Creates 'Player' and 'season' column that are now blocks
+for player in one_row_per_rookie.Name:
+    for season in seasons:
+        block_per_rookie.ix[len(block_per_rookie)+1,0:2]=[player,season]
+            
+# Drops unwanted columns
+block_per_rookie = block_per_rookie.drop(block_per_rookie.columns[2:],axis=1)
+
+# Removes initialization rows
+block_per_rookie=block_per_rookie[10:]
+
+# Renames columns
+block_per_rookie.columns=['Player','season']
+
+# Merges data set containing one row per rookie with data set containing a block for each
+
+rookie_data = pd.merge(block_per_rookie,one_row_per_rookie,left_on='Player', right_on='Name',how='inner')
+
+# Column manipulation
+
+rookie_data = rookie_data.drop(['Height With Shoes','Player_x','College','Player_y','Player','Tm','College'],axis=1)
+
+rookie_data = rookie_data.rename(index=str,columns={'Pk':'Pick','Height No Shoes':'height_in_inches','Position':'Pos','Name':"Player",'Weight':'Wt'})
+
+# Appends rookie data to prediction_set_missing_rookies
+final_pred_set = prediction_set_missing_rookies.append(rookie_data)
+
+# Re-orders columns (not done)
+new_cols=['Player']
+new_cols.append('season')
+new_cols.extend(np.array(final_pred_set.columns[0:]))
+
+final_pred_set = final_pred_set[new_cols]
+
+final_pred_set.to_csv('/Users/Miller/Documents/NBA 2016-17/RNN Prior Modeling Data/rnn_prediction_set.csv')
+
+###### -->  Need to fix column order and merge list containing all players in nba history to add rookies who werent drafted
+
+##### --> Check scrapes every player in nba history script to finish up new scrape to add okaro white and chasson randle
+
+
+
