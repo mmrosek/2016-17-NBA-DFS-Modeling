@@ -1,0 +1,319 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+
+### Can't be run straight through b/c of statements that delete removable variables
+
+# Read in all_seasons data set
+all_seasons=pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/3_all_szns_days_and_games_since_last_game_categorical_w_career_stats_entering_next_game_and_szn.csv')
+all_seasons.drop(['Unnamed: 0'], inplace = True, axis=1)
+
+############################################################################################
+############################################################################################
+
+all_stats=['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GmSc','MP','ORB','PF','STL','TOV',"TRB",'GS', 'double_double', 'triple_double', 'fd_pts', 'dk_pts', 'fd_pts_per_min', 'dk_pts_per_min', 'career_fd_pts_per_min_entering_next_szn' , 'career_dk_pts_per_min_entering_next_szn' , 'career_fd_pts_entering_next_szn' , 'career_dk_pts_entering_next_szn' , 'career_games_played_entering_next_szn' , 'career_mins_played_entering_next_szn' , 'career_fd_pts_per_game_entering_next_szn' , 'career_dk_pts_per_game_entering_next_szn']
+
+# Creates dataframe with each row corresponding to a season for each player/season combo
+df=pd.pivot_table(all_seasons, index=["season","Player"], columns=["Game_Number"], values=all_stats)
+
+# Creates new df with correct columns
+df = df.reset_index()
+
+####################################################################################
+####################################################################################
+####################################################################################
+
+##### This section calculates avg, wtd. avg, median and totals for every stat for every szn
+
+# Creates dictionary with keys as years and values as number of games in the season
+
+pts_cols = [column for column in df.columns if 'PTS' in str(column)]
+
+list_of_game_nums = [len(pts_cols) - sum(df.ix[df.season==year,pts_cols].isnull().sum(axis=0) == len(df.ix[df.season==year,pts_cols])) for year in range(1998,2016)]
+
+years = list(range(1998,2016))
+
+num_games_in_season_dict = {year:num_games for (year,num_games) in zip(years,list_of_game_nums)}
+
+# Removes excess variables to free up memory
+del all_seasons
+
+####################################################################################
+
+weights = [0.2,0.3,0.5,0.8,1.2]
+
+stats = ['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GmSc','MP','ORB','PF','STL','TOV',"TRB",'fd_pts','dk_pts','fd_pts_per_min','dk_pts_per_min']
+
+years = range(1998,2016)
+
+start = time.time()
+######################
+for weight in weights:
+
+    for year in years:
+        
+        print(year)
+    
+        # Calculates the number of games in a season
+        num_of_games_in_season = num_games_in_season_dict[year]
+        
+        # Creates increment value for weight vector
+        increment = weight / (num_of_games_in_season-1)
+                
+        # Creates weight vector
+        weight_vector = np.array([(1-weight/2+(increment*game)) for game in range(num_of_games_in_season)])
+        
+        # Using first stat [PTS usually] columns to determine which games each player played in, could be any stat in theory
+        start_of_first_stat = np.argmax(df.columns.get_level_values(0).str.contains(stats[0],regex=False) > 0)
+        
+        # Calculates last column ("end_of_year") containing data for stat/year combo in question
+        end_of_first_stat = start_of_first_stat + num_of_games_in_season
+        
+        # Vectorized calculation for weight_resdistribution (missing_weight / present_weight)
+        weight_resdistribution=np.array(np.where(df.ix[df.season == year,start_of_first_stat:end_of_first_stat].isnull().sum(axis=1) == num_of_games_in_season , 0, np.sum((pd.isnull(df.ix[df.season == year,start_of_first_stat:end_of_first_stat]) * weight_vector),axis=1)/np.sum((~pd.isnull(df.ix[df.season == year,start_of_first_stat:end_of_first_stat]) * weight_vector),axis=1)))
+        
+        for stat in stats:
+            
+            #print(stat)
+              
+            start_of_stat = np.argmax(df.columns.get_level_values(0).str.contains(stat,regex=False) > 0)
+        
+            # Calculates last column ("end_of_stat") containing data for stat/year combo in question
+            end_of_stat = start_of_stat + num_of_games_in_season
+            
+            # Creates list of columns that contain the string "PTS"
+            stat_cols = [column for column in df.columns if stat in str(column)]
+            
+            if weight == weights[0]:
+                
+                # Calculates avg and median stats for the entire season including playoffs
+                df.ix[df.season == year, 'full_szn_avg_{}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].mean(axis=1))
+                df.ix[df.season == year,'full_szn_median_{}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].median(axis=1))
+            
+                # Removes playoff data from total calculation
+                if year == 2011:
+                            
+                    ### Creating new column in the form "total_stat.lower()_year" 
+                    df.ix[df.season == year, 'reg_szn_total_{0}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:start_of_stat+66].sum(axis=1))
+                      
+                elif year == 1998:
+                            
+                    ### Creating new column in the form "total_stat.lower()_year" 
+                    df.ix[df.season == year, 'reg_szn_total_{0}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:start_of_stat+50].sum(axis=1))
+                        
+                else:
+                            
+                    ### Creating new column in the form "total_stat.lower()_year" 
+                    df.ix[df.season == year, 'reg_szn_total_{0}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:start_of_stat+82].sum(axis=1))
+                        
+            ### Converts NaN values to 0 then multiplies the row values by the newly calculated weight vector 
+            df.ix[df.season==year,'wtd_avg_{0}_{1}'.format(weight,stat.lower())] = np.array(np.sum((((~(df.ix[df.season == year,start_of_stat:end_of_stat].isnull()) * weight_vector)).multiply(weight_resdistribution,axis='index') + (~(df.ix[df.season == year,start_of_stat:end_of_stat].isnull()) * weight_vector)) * df.ix[df.season == year,start_of_stat:end_of_stat],axis=1)/num_of_games_in_season)
+
+end = time.time()
+print(end - start)
+
+
+############################################################################################
+############################################################################################
+
+# Change dataset name to recycle code
+years_as_rows = df.copy()
+
+#del df
+
+######################################################################################
+
+### Calculates number of games played in a season
+
+# Returns list of column names for multi-indexed DF
+column_names = list(years_as_rows.columns.get_values())
+
+# Calculates list of column numbers for 'MP'
+minutes_played_col_nums = [col_num for col_num in range(len(column_names)) if 'MP' in column_names[col_num]]
+
+# Maximum possible number of games played (108)
+max_num_of_games = len(minutes_played_col_nums)
+
+# Calculating nubmer of games played for each player
+years_as_rows['full_szn_games_played'] = max_num_of_games - years_as_rows.ix[:,minutes_played_col_nums].isnull().sum(axis=1)
+
+del column_names
+del minutes_played_col_nums
+del max_num_of_games
+
+###################################################################################
+
+# Calculates volume * efficiency prior
+years_as_rows['FD_prior_full_szn_avg_x_reg_szn_total'] = years_as_rows['full_szn_avg_fd_pts'] * years_as_rows['reg_szn_total_fd_pts']
+years_as_rows['DK_prior_full_szn_avg_x_reg_szn_total'] = years_as_rows['full_szn_avg_dk_pts'] * years_as_rows['reg_szn_total_dk_pts']
+
+# Calculates volume * efficiency prior
+years_as_rows['FD_prior_^0.7_of_total'] = years_as_rows['full_szn_avg_fd_pts'] * (years_as_rows['reg_szn_total_fd_pts']**0.7)
+years_as_rows['DK_prior_^0.7_of_total'] = years_as_rows['full_szn_avg_dk_pts'] * (years_as_rows['reg_szn_total_dk_pts']**0.7)
+
+############################################################################################
+############################################################################################
+
+### Removes game log data
+
+years_as_rows = pd.DataFrame(years_as_rows.to_records())
+
+years_as_rows = years_as_rows.drop('index', axis=1)
+
+# Fills in missing values
+years_as_rows = years_as_rows.fillna(value=0)
+
+career_stats = ['career_fd_pts_per_min_entering_next_szn' , 'career_dk_pts_per_min_entering_next_szn' , 'career_fd_pts_entering_next_szn' , 'career_dk_pts_entering_next_szn' , 'career_games_played_entering_next_szn' , 'career_mins_played_entering_next_szn' , 'career_fd_pts_per_game_entering_next_szn' , 'career_dk_pts_per_game_entering_next_szn']
+
+# Identifies last present value in career stats columns to grab value corresponding to the end of the season
+for stat in career_stats:
+    print(stat)
+    years_as_rows['{}'.format(stat)]=np.max(np.fliplr(years_as_rows.ix[:,years_as_rows.columns.str.contains(stat)]), axis=1)
+
+# Returns list of column names for multi-indexed DF
+column_names = list(years_as_rows.columns.get_values())
+
+# Calculates list of column numbers for last stat containing gamelog data [usually career dk pts per game, game 108], has one extra value that is not a gamelog stat, hence the :-1 in the creation of columns list below
+end_of_gamelog_col_nums = [col_num for col_num in range(len(column_names)) if all_stats[len(all_stats)-1] in column_names[col_num]]
+
+# Creates list of columns that contain non-gamelog data --> starts with first column after game_log columns to the end of all columns
+col_list = list(range(np.max(end_of_gamelog_col_nums[:-1])+1,len(years_as_rows.columns)))
+col_list.append(0)
+col_list.append(1)
+col_list.sort()
+
+years_as_rows_season_stats_only = years_as_rows.ix[:,col_list]
+
+# Fixes player and season column
+years_as_rows_season_stats_only = years_as_rows_season_stats_only.rename(columns={"('season', '')":'season',"('Player', '')":'Player'})
+
+# Free memory
+del years_as_rows
+
+# Sorts the dataframe by player then season
+years_as_rows_season_stats_only = years_as_rows_season_stats_only.sort_values(['Player','season'], ascending=True)
+
+################################################################################################
+################################################################################################
+
+### Merging ADP data
+
+# Importing ADP data
+
+for year in range(10,17):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/20{0}-{1}_nba_adp.csv".format(year,year+1))
+    one_year["season"] = 2000+year
+    if year == 10:
+        all_adp=one_year
+    else:
+        all_adp = all_adp.append(one_year)
+
+adp_wide=pd.pivot_table(all_adp, index=["Name", 'season'], values=['Y!Adp9','ESPNAdp8'])
+
+adp_wide = adp_wide.reset_index()
+
+# Merge Step
+years_rows = pd.merge(years_as_rows_season_stats_only, adp_wide, left_on=['Player', 'season'], right_on=['Name', 'season'], how='left')
+
+# Drops "Name" column
+years_rows.drop("Name", axis=1, inplace = True)
+
+del adp_wide
+del all_adp
+del one_year
+
+###### Merge draft and ht/wt data with prior_data_with_next_year_in_row
+
+### Merges data set of all players to ever play with years_as_rows
+
+### Reads in dataset of all players to play in NBA history with relevant duplicates fixed
+players_full = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/every_player_in_nba_history_no_duplicates_for_1998_plus.csv")
+
+players_full.ix[(players_full.Player=='David Lee') & (players_full.College == 'University of San Francisco'),'Player'] = 'David San Fran Lee'
+
+players_full.ix[(players_full.Player=='Gerald Henderson') & (players_full.College == 'Virginia Commonwealth University'),'Player'] = 'Gerald VCU Henderson'
+
+players_full.ix[(players_full.Player=='Mike Dunleavy') & (players_full.College == 'University of South Carolina'),'Player'] = 'Mike SCAR Dunleavy'
+
+years_as_rows_size = pd.merge(years_rows, players_full, on='Player', how='left')
+
+################################################################################################
+################################################################################################
+
+### Merges years_as_rows with ht/wt with draft data
+
+# Reads in draft data
+draft=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_1995_to_2015.csv")
+
+### Duplicate Players in the Draft data set:
+# Corey Brewer
+# Marcus Williams
+# Marcus Thornton
+
+# Returns rows containing duplicated players
+
+#draft.Player.duplicated()
+#test_mask = draft.Player.duplicated()
+#draft[test_mask]
+
+################################################################################################
+
+### Removing/editing duplicated players
+
+# Remove irrelevant Marcus Thornton from draft data set
+
+thornton_mask = (draft.Player == "Marcus Thornton") & (draft.Pick == 45)
+
+draft=draft[~thornton_mask]
+
+# Remove irrelevant Corey Brewer from draft data set
+
+brewer_mask = (draft.Player == "Corey Brewer") & (draft.Pick == 51)
+
+draft=draft[~brewer_mask]
+
+#################################################################################################
+
+### Change name of "Marcus Williams" to "Marcus Elliott Williams" to mirror change made to "wide"
+
+williams_mask = (draft.Player == "Marcus Williams") & (draft.Pick == 33)
+
+draft.ix[williams_mask,"Player"]="Marcus Elliott Williams"
+
+#################################################################################################
+
+### Merge with draft data
+
+years_rows_size_draft = pd.merge(years_as_rows_size, draft, on="Player", how='left')
+
+#################################################################################################
+#################################################################################################
+
+### Calculating age for each player for each year at start of season (each row essentially)
+
+birthday_vector = pd.to_datetime(years_rows_size_draft['Birth Date'])
+
+# Calculates vector of "season" column as datetime object
+season_vector = pd.to_datetime(years_rows_size_draft['season'], yearfirst=True, format="%Y")
+
+# Accounts for difference in season_vector and start of actual season (season_vector starts on Jan. 1)
+days_from_jan_1_to_start_of_season = datetime.timedelta(days = 300)
+
+# Creates vector of datetime objects containing age in number of days at start of season
+age_at_start_of_season_vector = (season_vector - birthday_vector) + days_from_jan_1_to_start_of_season
+
+# Creates list of ages at start of season without the datetime formatting
+formatted_age_list = [str(age)[:5] if len(str(age))==19 else str(age)[:4] for age in age_at_start_of_season_vector]
+
+# Creates new column for age at start of season
+years_rows_size_draft['age_at_start_of_season'] = formatted_age_list
+
+# Removes unnamed columns
+unnamed_cols = list(years_rows_size_draft.columns[years_rows_size_draft.columns.str.contains("Unnamed")])
+years_rows_size_draft.drop(unnamed_cols,axis=1,inplace=True)
+
+# Removes unwanted 'Ht' column
+years_rows_size_draft.drop('Ht',axis=1,inplace=True)
+
+#years_rows_size_draft.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/each_szn_as_one_row_use_for_creating_prior_datasets2_20111.csv")
