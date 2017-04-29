@@ -1,0 +1,260 @@
+import pandas as pd
+import numpy as np
+
+### Read in list of all players to play in NBA --> 'To' == 2017 for all players who have played this season
+all_players = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/every_player_to_play_in_nba_no_dups_new.csv')
+
+### Importing ADP data
+
+for year in range(10,17):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/20{0}-{1}_nba_adp.csv".format(year,year+1))
+    one_year["season"] = 2000+year
+    if year == 10:
+        all_adp=one_year
+    else:
+        all_adp = all_adp.append(one_year)
+
+adp_wide=pd.pivot_table(all_adp, index=["Name", 'season'], values=['Y!Adp9','ESPNAdp8','CBSAdp',"FanTraxADP"])
+
+adp_wide = adp_wide.reset_index()
+
+####################################################################################
+
+### Creates a list of names of players who are playing in 2016-17
+players_playing_this_szn = np.array(all_players.ix[all_players.To == 2017,'Player'])
+
+### Read in prior training sets
+predicting_fifth_year = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_fifth_season_using_previous_four_years_all_five_year_combos.csv')
+predicting_fourth_year = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_fourth_season_using_previous_three_years.csv')
+predicting_third_year = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_third_season_using_previous_two_years.csv')
+predicting_second_year = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_second_season_using_first_season.csv')
+predicting_first_year = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_first_season.csv')
+
+##########################################################################################
+##########################################################################################
+
+### Creates rookie prediction set 
+
+# Creates list of players going into their second szn
+
+prediction_set_players_entering_first_szn = predicting_first_year.ix[:,['Player','From','To','Pos','Wt','first_year_season','first_year_espn_adp','first_year_yahoo_adp', 'Draft', 'Pick','first_year_age_at_start_of_season','height_in_inches']]
+
+rookies_in_2016 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/Pred sets only players playing in 2016/pred_set_entering_first_season.csv")
+
+rookies_in_2016.drop('Unnamed: 0', axis=1, inplace=True)
+
+final_first_year_pred_set = prediction_set_players_entering_first_szn.append(rookies_in_2016)
+
+##########################################################################################
+
+### Creates prediction set for players entering their second szn
+
+# Creates list of players going into their second szn
+players_going_into_second_szn = [player for player in predicting_first_year.Player.unique() if ((player in players_playing_this_szn) & (predicting_first_year.ix[predicting_first_year.Player==player,'first_year_season']==2015).bool())]
+
+# Creats list of row numbers corresponding to players who are entering second season
+rows_of_players_going_into_second_szn = [row for row in range(len(predicting_first_year)) if predicting_first_year.ix[row,'Player'] in players_going_into_second_szn]
+
+if len(players_going_into_second_szn)-len(rows_of_players_going_into_second_szn) !=0:
+    print('Something broke')
+
+prediction_set_players_entering_second_szn = predicting_first_year.ix[rows_of_players_going_into_second_szn,:]
+
+### prediction_set_players_entering_second_szn is missing next_szn_adp values b/c when og data set (career_games_mins) was created the player/year combos for the upcoming szn didnt yet exist so the adp values werent kept upon merging
+
+prediction_set_players_entering_second_szn['upcoming_season']=2016
+
+# Merge adp values with prediction_set_of_players_entering_second_szn
+prediction_set_players_entering_second_szn = pd.merge(prediction_set_players_entering_second_szn,adp_wide,left_on=['Player','upcoming_season'],right_on=['Name','season'],how='left')
+
+# Drop unwanted columns
+prediction_set_players_entering_second_szn = prediction_set_players_entering_second_szn.drop(['Name','season','upcoming_season','Unnamed: 0','CBSAdp','FanTraxADP'], axis=1)
+
+# Rename adp columns
+prediction_set_players_entering_second_szn = prediction_set_players_entering_second_szn.rename(columns={'ESPNAdp8':'second_year_espn_adp',  'Y!Adp9':'second_year_yahoo_adp'})
+
+# Fill in empty ADP values
+prediction_set_players_entering_second_szn.ix[:,['second_year_espn_adp', 'second_year_yahoo_adp']] = prediction_set_players_entering_second_szn.ix[:,['second_year_espn_adp', 'second_year_yahoo_adp']].fillna(value=300)
+
+prediction_set_players_entering_second_szn.to_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/Pred sets only players playing in 2016/pred_set_entering_second_season2_19.csv')
+
+############################################################################################
+############################################################################################
+
+### Creates prediction set for players entering their third szn
+
+# Creates list of players going into their third szn
+players_going_into_third_szn = [player for player in predicting_second_year.Player.unique() if ((player in players_playing_this_szn) & (predicting_second_year.ix[predicting_second_year.Player==player,'second_year_season']==2015).bool())]
+
+# Creats list of row numbers corresponding to players who are entering second season
+rows_of_players_going_into_third_szn = [row for row in range(len(predicting_second_year)) if predicting_second_year.ix[row,'Player'] in players_going_into_third_szn]
+
+if len(players_going_into_third_szn)-len(rows_of_players_going_into_third_szn) !=0:
+    print('Something broke')
+
+prediction_set_players_entering_third_szn = predicting_second_year.ix[rows_of_players_going_into_third_szn,:]
+
+### prediction_set_players_entering_second_szn is missing next_szn_adp values b/c when og data set (career_games_mins) was created the player/year combos for the upcoming szn didnt yet exist so the adp values werent kept upon merging
+
+prediction_set_players_entering_third_szn['upcoming_season']=2016
+
+# Merge adp values with prediction_set_of_players_entering_second_szn
+prediction_set_players_entering_third_szn = pd.merge(prediction_set_players_entering_third_szn,adp_wide,left_on=['Player','upcoming_season'],right_on=['Name','season'],how='left')
+
+# Drop unwanted columns
+prediction_set_players_entering_third_szn = prediction_set_players_entering_third_szn.drop(['Name','FanTraxADP','CBSAdp','Unnamed: 0','season','upcoming_season'], axis=1)
+
+# Rename adp columns
+prediction_set_players_entering_third_szn = prediction_set_players_entering_third_szn.rename(columns={'ESPNAdp8':'third_year_espn_adp',  'Y!Adp9':'third_year_yahoo_adp'})
+
+# Fill in empty ADP values
+prediction_set_players_entering_third_szn.ix[:,['third_year_espn_adp', 'third_year_yahoo_adp']] = prediction_set_players_entering_third_szn.ix[:,['third_year_espn_adp', 'third_year_yahoo_adp']].fillna(value=300)
+
+prediction_set_players_entering_third_szn.to_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/Pred sets only players playing in 2016/pred_set_entering_third_season.csv')
+
+############################################################################################
+############################################################################################
+
+### Creates prediction set for players entering their fourth szn
+
+# Creates list of players going into their fourth szn
+players_going_into_fourth_szn = [player for player in predicting_third_year.Player.unique() if ((player in players_playing_this_szn) & (predicting_third_year.ix[predicting_third_year.Player==player,'third_year_season']==2015).bool())]
+
+# Creats list of row numbers corresponding to players who are entering third season
+rows_of_players_going_into_fourth_szn = [row for row in range(len(predicting_third_year)) if predicting_third_year.ix[row,'Player'] in players_going_into_fourth_szn]
+
+if len(players_going_into_fourth_szn)-len(rows_of_players_going_into_fourth_szn) !=0:
+    print('Something broke')
+
+prediction_set_players_entering_fourth_szn = predicting_third_year.ix[rows_of_players_going_into_fourth_szn,:]
+
+### prediction_set_players_entering_third_szn is missing next_szn_adp values b/c when og data set (career_games_mins) was created the player/year combos for the upcoming szn didnt yet exist so the adp values werent kept upon merging
+
+prediction_set_players_entering_fourth_szn['upcoming_season']=2016
+
+# Merge adp values with prediction_set_of_players_entering_third_szn
+prediction_set_players_entering_fourth_szn = pd.merge(prediction_set_players_entering_fourth_szn,adp_wide,left_on=['Player','upcoming_season'],right_on=['Name','season'],how='left')
+
+# Drop unwanted columns
+prediction_set_players_entering_fourth_szn = prediction_set_players_entering_fourth_szn.drop(['Name','FanTraxADP','CBSAdp','Unnamed: 0','upcoming_season','season'], axis=1)
+
+# Rename adp columns
+prediction_set_players_entering_fourth_szn = prediction_set_players_entering_fourth_szn.rename(columns={'ESPNAdp8':'fourth_year_espn_adp', 'Y!Adp9':'fourth_year_yahoo_adp'})
+
+# Fill in empty ADP values
+prediction_set_players_entering_fourth_szn.ix[:,['fourth_year_espn_adp', 'fourth_year_yahoo_adp']] = prediction_set_players_entering_fourth_szn.ix[:,['fourth_year_espn_adp', 'fourth_year_yahoo_adp']].fillna(value=300)
+
+prediction_set_players_entering_fourth_szn.to_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/Pred sets only players playing in 2016/pred_set_entering_fourth_season2_19.csv')
+
+############################################################################################
+############################################################################################
+
+###### Creates prediction set for players entering their fifth+ szn
+
+# First extracting players who are entering their fifth szn from predicting_fourth_year dataset
+
+# Then extracting players who have played more than five from predicting_fifth_year data set 
+
+####################################################
+
+# Creates list of players going into their fifth szn
+players_going_into_fifth_szn = [player for player in predicting_fourth_year.Player.unique() if ((player in players_playing_this_szn) & (predicting_fourth_year.ix[predicting_fourth_year.Player==player,'fourth_year_season']==2015).bool())]
+
+# Creats list of row numbers corresponding to players who are entering fourth season
+rows_of_players_going_into_fifth_szn = [row for row in range(len(predicting_fourth_year)) if predicting_fourth_year.ix[row,'Player'] in players_going_into_fifth_szn]
+
+if len(players_going_into_fifth_szn)-len(rows_of_players_going_into_fifth_szn) !=0:
+    print('Something broke')
+
+prediction_set_players_entering_fifth_szn = predicting_fourth_year.ix[rows_of_players_going_into_fifth_szn,:]
+
+### prediction_set_players_entering_fourth_szn is missing next_szn_adp values b/c when og data set (career_games_mins) was created the player/year combos for the upcoming szn didnt yet exist so the adp values werent kept upon merging
+
+prediction_set_players_entering_fifth_szn['upcoming_season']=2016
+
+# Merge adp values with prediction_set_of_players_entering_fourth_szn
+prediction_set_players_entering_fifth_szn = pd.merge(prediction_set_players_entering_fifth_szn,adp_wide,left_on=['Player','upcoming_season'],right_on=['Name','season'],how='left')
+
+# Drop unwanted columns
+prediction_set_players_entering_fifth_szn = prediction_set_players_entering_fifth_szn.drop(['Name','FanTraxADP','CBSAdp','Unnamed: 0','upcoming_season','season'], axis=1)
+
+# Rename adp columns
+prediction_set_players_entering_fifth_szn = prediction_set_players_entering_fifth_szn.rename(columns={'ESPNAdp8':'fifth_year_espn_adp', 'Y!Adp9':'fifth_year_yahoo_adp'})
+
+# Fill in empty ADP values
+prediction_set_players_entering_fifth_szn.ix[:,['fifth_year_espn_adp', 'fifth_year_yahoo_adp']] = prediction_set_players_entering_fifth_szn.ix[:,['fifth_year_espn_adp', 'fifth_year_yahoo_adp']].fillna(value=300)
+
+###########################################################
+
+# Extracting players who have played more than five seasons
+
+played_five_plus = predicting_fifth_year[(predicting_fifth_year.To == 2017) & (predicting_fifth_year.fifth_year_season == 2015)]
+
+played_five_plus['upcoming_season']=2016
+
+# Merge adp values with prediction_set_of_players_entering_fourth_szn
+played_five_plus = pd.merge(played_five_plus,adp_wide,left_on=['Player','upcoming_season'],right_on=['Name','season'],how='left')
+
+# Drop unwanted columns
+played_five_plus = played_five_plus.drop(['Name','FanTraxADP','CBSAdp','Unnamed: 0','upcoming_season','season'], axis=1)
+
+# # Rename adp columns
+# played_five_plus = played_five_plus.rename(columns={'ESPNAdp8':'fifth_year_next_szn_espn_adp', 'Y!Adp9':'fifth_year_next_szn_yahoo_adp'})
+
+# # Fill in empty ADP values
+# played_five_plus.ix[:,['fifth_year_espn_adp', 'fifth_year_yahoo_adp']] = played_five_plus.ix[:,['fifth_year_espn_adp', 'fifth_year_yahoo_adp']].fillna(value=300)
+
+#####################
+
+### Need to change column names of played_five_plus to match those of prediction_set_players_entering_fifth_szn
+
+# Slide back year number of each column name by one year (fifth year needs to become fourth year to allow for prediction on 2016 as fifth year, so on for all of the other years)
+# First year data needs to be dropped b/c we only want to use four years and currently have five
+
+# Creates dictionaries with keys as old column names and values as new column names
+first_year_cols_to_none = {col:'drop' for col in played_five_plus.columns if 'first_year' in col}
+second_year_cols_to_first = {col:'first'+str(col)[6:] for col in played_five_plus.columns if 'second_year' in col}
+third_year_cols_to_second = {col:'second'+str(col)[5:] for col in played_five_plus.columns if 'third_year' in col}
+fourth_year_cols_to_third = {col:'third'+str(col)[6:] for col in played_five_plus.columns if 'fourth_year' in col}
+fifth_year_cols_to_fourth = {col:'fourth'+str(col)[5:] for col in played_five_plus.columns if 'fifth_year' in col}
+
+played_five_plus = played_five_plus.rename(columns=first_year_cols_to_none)
+played_five_plus = played_five_plus.rename(columns=second_year_cols_to_first)
+played_five_plus = played_five_plus.rename(columns=third_year_cols_to_second)
+played_five_plus = played_five_plus.rename(columns=fourth_year_cols_to_third)
+played_five_plus = played_five_plus.rename(columns=fifth_year_cols_to_fourth)
+
+# Rename adp columns
+played_five_plus = played_five_plus.rename(columns={'ESPNAdp8':'fifth_year_espn_adp', 'Y!Adp9':'fifth_year_yahoo_adp'})
+
+# Fill in empty ADP values
+played_five_plus.ix[:,['fifth_year_espn_adp', 'fifth_year_yahoo_adp']] = played_five_plus.ix[:,['fifth_year_espn_adp', 'fifth_year_yahoo_adp']].fillna(value=300)
+
+played_five_plus=played_five_plus.drop('drop',axis=1)
+
+# Appends df containing players who are entering fifth season with those who have played five plus
+prediction_set_players_entering_fifth_szn = prediction_set_players_entering_fifth_szn.append(played_five_plus)
+
+prediction_set_players_entering_fifth_szn.to_csv('/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/Pred sets only players playing in 2016/pred_set_entering_fifth_season2_19.csv')
+
+
+###############################################################
+
+# Old --> rookie pred set
+
+# # Creates column that indicates which season was rookie season
+# prediction_set_players_entering_first_szn['upcoming_season']=prediction_set_players_entering_first_szn.From - 1
+
+# # Merge adp values with prediction_set_of_players_entering_second_szn
+# prediction_set_players_entering_first_szn = pd.merge(prediction_set_players_entering_first_szn,adp_wide,left_on=['Player','upcoming_season'],right_on=['Name','season'],how='left')
+
+# # Drop unwanted columns
+# prediction_set_players_entering_first_szn.drop(['Name','season','upcoming_season','CBSAdp','FanTraxADP'], axis=1, inplace=True)
+
+# Rename adp columns
+# prediction_set_players_entering_first_szn.rename(columns={'ESPNAdp8':'first_year_espn_adp',  'Y!Adp9':'first_year_yahoo_adp'}, inplace=True)
+
+# Fill in empty ADP values
+# prediction_set_players_entering_first_szn.ix[:,['first_year_espn_adp', 'first_year_yahoo_adp']] = prediction_set_players_entering_first_szn.ix[:,['first_year_espn_adp', 'first_year_yahoo_adp']].fillna(value=300)
+
+

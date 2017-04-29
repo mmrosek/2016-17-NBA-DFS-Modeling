@@ -1,0 +1,153 @@
+import pandas as pd
+import numpy as np
+import datetime
+
+### Read in list of all players to play in NBA --> 'To' == 2017 for all players who have played this season
+all_players = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/every_player_to_play_in_nba_no_dups_new.csv')
+
+all_players.drop(['Unnamed: 0', 'Unnamed: 0.1','College'], axis=1, inplace=True)
+
+### Creates a list of names of players who are playing in 2016-17
+rookies = all_players[(all_players.To == 2017) & (all_players.From == 2017)]
+
+# Adds first year season column
+rookies['first_year_season'] = 2016
+
+### Importing ADP data ###
+for year in range(10,17):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/20{0}-{1}_nba_adp.csv".format(year,year+1))
+    one_year["season"] = 2000+year
+    if year == 10:
+        all_adp=one_year
+    else:
+        all_adp = all_adp.append(one_year)
+
+adp_wide=pd.pivot_table(all_adp, index=["Name", 'season'], values=['Y!Adp9','ESPNAdp8'])
+
+adp_wide = adp_wide.reset_index()
+
+# Merges adp with rookie anthropometric data
+rookies_adp = pd.merge(rookies,adp_wide,left_on='Player',right_on='Name',how='left')
+
+# Renames adp columns
+rookies_adp.rename(columns={'Y!Adp9':'first_year_yahoo_adp', 'ESPNAdp8':'first_year_espn_adp'},inplace=True)
+
+# Drops unwanted columns
+rookies_adp.drop(['Name','season'],axis=1,inplace=True)
+
+#################################################################################################
+
+### Merges years_as_rows with ht/wt with draft data
+
+# Reads in draft data
+draft=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_1995_to_2015.csv")
+
+### Duplicate Players in the Draft data set:
+# Corey Brewer
+# Marcus Williams
+# Marcus Thornton
+
+################################################################################################
+
+### Removing/editing duplicated players
+
+# Remove irrelevant Marcus Thornton from draft data set
+
+thornton_mask = (draft.Player == "Marcus Thornton") & (draft.Pick == 45)
+
+draft=draft[~thornton_mask]
+
+# Remove irrelevant Corey Brewer from draft data set
+
+brewer_mask = (draft.Player == "Corey Brewer") & (draft.Pick == 51)
+
+draft=draft[~brewer_mask]
+
+#################################################################################################
+
+### Change name of "Marcus Williams" to "Marcus Elliott Williams" to mirror change made to "wide"
+
+williams_mask = (draft.Player == "Marcus Williams") & (draft.Pick == 33)
+
+draft.ix[williams_mask,"Player"]="Marcus Elliott Williams"
+
+#################################################################################################
+
+### Merge with old draft data
+
+rookies_adp_draft = pd.merge(rookies_adp, draft, on="Player", how='left')
+
+rookies_adp_draft.rename(columns={'Pick':'Pk'},inplace=True)
+
+#################################################################################################
+
+### Merge with 2016 draft data 
+
+draft_2016 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_2016.csv")
+
+draft_2016.drop(['Tm','College', 'Yrs', 'Unnamed: 6','Unnamed: 7', 'Unnamed: 8', 'Unnamed: 9'],axis=1,inplace=True)
+
+draft_2016.ix[draft_2016.Player=='DeAndre Bembry','Player'] = "DeAndre' Bembry"
+
+draft_2016.ix[draft_2016.Player=='Marquesse Chriss','Player'] = "Marquese Chriss"
+
+draft_2016.ix[draft_2016.Player=='Taurean Prince','Player'] = "Taurean Waller-Prince"
+
+draft_2016.ix[draft_2016.Player=='Timothe Luwawu','Player'] = "Timothe Luwawu-Cabarrot"
+
+# Merge
+rookies_adp_draft = pd.merge(rookies_adp_draft,draft_2016,on='Player',how='left')
+
+rookies_adp_draft.Draft = 0
+for row in range(len(rookies_adp_draft)):
+    if pd.isnull(rookies_adp_draft.ix[row,'Draft_x']):
+        rookies_adp_draft.ix[row,'Draft']=rookies_adp_draft.ix[row,'Draft_y']
+    else:
+        rookies_adp_draft.ix[row,'Draft']=rookies_adp_draft.ix[row,'Draft_x']
+        
+rookies_adp_draft.drop(['Draft_x','Draft_y'],inplace=True,axis=1) 
+
+rookies_adp_draft.ix[:,'Draft']=rookies_adp_draft.ix[:,'Draft'].fillna(value=0)
+        
+rookies_adp_draft.Pick = 100 
+for row in range(len(rookies_adp_draft)):
+    if pd.isnull(rookies_adp_draft.ix[row,'Pk_x']):
+        rookies_adp_draft.ix[row,'Pick']=rookies_adp_draft.ix[row,'Pk_y']
+    else:
+        rookies_adp_draft.ix[row,'Pick']=rookies_adp_draft.ix[row,'Pk_x']
+        
+rookies_adp_draft.drop(['Pk_x','Pk_y'],inplace=True,axis=1) 
+        
+#################################################################################################
+
+### Calculating age for each player for each year at start of season (each row essentially)
+
+birthday_vector = pd.to_datetime(rookies_adp_draft['Birth Date'])
+
+# Calculates vector of "season" column as datetime object
+season_vector = pd.to_datetime(rookies_adp_draft['first_year_season'], yearfirst=True, format="%Y")
+
+# Accounts for difference in season_vector and start of actual season (season_vector starts on Jan. 1)
+days_from_jan_1_to_start_of_season = datetime.timedelta(days = 300)
+
+# Creates vector of datetime objects containing age in number of days at start of season
+age_at_start_of_season_vector = (season_vector - birthday_vector) + days_from_jan_1_to_start_of_season
+
+# Creates list of ages at start of season without the datetime formatting
+formatted_age_list = [str(age)[:5] if len(str(age))==19 else str(age)[:4] for age in age_at_start_of_season_vector]
+
+# Creates new column for age at start of season
+rookies_adp_draft['first_year_age_at_start_of_season'] = formatted_age_list
+
+rookies_adp_draft['Pick']=rookies_adp_draft['Pick'].fillna(value=100)
+
+rookies_adp_draft.ix[:,['first_year_espn_adp', 'first_year_yahoo_adp']]=rookies_adp_draft.ix[:,['first_year_espn_adp', 'first_year_yahoo_adp']].fillna(value=300)
+
+# Creates height in inches column
+for row in range(len(rookies_adp_draft)):
+    rookies_adp_draft.ix[row,'height_in_inches'] = 12*int(rookies_adp_draft.ix[row,'Ht'].split('-')[0]) + int(rookies_adp_draft.ix[row,'Ht'].split('-')[1])
+
+# Drops old Ht column
+rookies_adp_draft.drop(['Ht','Yrs','Birth Date'],axis=1,inplace=True)
+
+rookies_adp_draft.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Prediction Sets/Pred sets only players playing in 2016/pred_set_entering_first_season.csv")

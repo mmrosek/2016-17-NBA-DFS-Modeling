@@ -1,0 +1,113 @@
+import pandas as pd
+import numpy as np
+
+### Read in RNN prior data set
+years_as_rows = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/each_szn_as_one_row_use_for_creating_prior_datasets.csv")
+
+############################################################################################
+
+##### Building Prior Training Data Sets #####
+
+### Changes name of next_year_ESPN and next_year_Yahoo_ADP b/c they are needed for prediction of the next season
+years_as_rows.rename(columns = {'ESPNAdp8':'espn_adp','Y!Adp9':'yahoo_adp'},inplace=True)
+
+### Removes unwanted columns
+unwanted_cols = list(years_as_rows.columns[years_as_rows.columns.str.contains("next_year|Unnamed|Birth Date|College|FanTrax|CBS")])
+years_as_rows.drop(unwanted_cols,axis=1,inplace=True)
+
+# Columns that don't need prefixes start on the far left
+new_col_order = ['Player','From','To','Pos','height_in_inches','Wt','Pick','Draft','season','age_at_start_of_season']
+
+# Creates list of columns that need 'blank_year' prefix (except for career_games_played and career_reg_szn_minutes_played as they fall after this concurrent section of columns)
+prefix_cols = years_as_rows.columns[np.argmax(years_as_rows.columns.str.contains('Player'))+1:np.argmax(years_as_rows.columns.str.contains('From'))]
+new_col_order.extend(prefix_cols)
+
+# Resets column order
+years_as_rows = years_as_rows[new_col_order]
+
+### Modifies NA cells ###
+
+# Fills NA "Pick" cells with 1000
+years_as_rows.ix[:,'Pick'] = years_as_rows.ix[:,'Pick'].fillna(value=100)
+
+# Fills NA ADP cells with 1000
+years_as_rows.ix[:,years_as_rows.columns[years_as_rows.columns.str.contains('yahoo|espn')]] = years_as_rows.ix[:,years_as_rows.columns[years_as_rows.columns.str.contains('yahoo|espn')]].fillna(value=300)
+
+# Fills remainig NA cells with 0
+years_as_rows = years_as_rows.fillna(value=0)
+######################################################################
+
+# Calculates column number for "season" (first column that needs a prefix)
+first_prefix_column = np.argmax(years_as_rows.columns.str.contains('season'))
+
+# Creates dictionary containing data set for each possible subset within 18 years in which each player in the dataset played in that season of their career
+year_list = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth']
+df_dict = {}
+for i in range(len(year_list)):
+    # Creates new dataframe and corresponding key
+    df_dict['{}_year_df'.format(year_list[i])] = years_as_rows[(years_as_rows.season == (years_as_rows.From -1 + i)) & (years_as_rows["('full_szn_games_played', '')"] > 0)]
+    # Creates list of new column names with corresponding prefixes based on year (starts at adp_col_num column b/c it is first column that needs a prefix)
+    new_names = [(column,"{}_year_".format(year_list[i]) + column) for column in df_dict['{}_year_df'.format(year_list[i])].ix[:, first_prefix_column:].columns.values]
+    # Renames columns
+    df_dict['{}_year_df'.format(year_list[i])].rename(columns =  dict(new_names), inplace = True)
+
+##########################
+
+### Merging data sets ###
+
+# Creates first year data set
+first_year_prediction = df_dict['first_year_df']
+first_year_prediction.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_first_season69.csv")
+
+# Creates second year data set
+second_year_prediction = pd.merge(df_dict['second_year_df'], df_dict['first_year_df'], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+second_year_prediction.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_second_season_using_first_season69.csv")
+
+# Creates third year data set
+third_and_second = pd.merge(df_dict['third_year_df'], df_dict['second_year_df'], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+third_year_prediction = pd.merge(third_and_second, df_dict['first_year_df'], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+third_year_prediction.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_third_season_using_previous_two_years69.csv")
+
+# Creates fourth year data set
+fourth_and_third = pd.merge(df_dict['fourth_year_df'], df_dict['third_year_df'], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+fourth_third_second = pd.merge(fourth_and_third,df_dict['second_year_df'], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+fourth_year_prediction = pd.merge(fourth_third_second, df_dict['first_year_df'], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+fourth_year_prediction.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_fourth_season_using_previous_three_years69.csv")
+
+# Creates fifth year plus data set
+for i in range(len(year_list)-4):
+    print(i)
+    pred_and_prev_year = pd.merge(df_dict['{}_year_df'.format(year_list[::-1][i])], df_dict['{}_year_df'.format(year_list[::-1][i+1])], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+    pred_and_two_prev_year = pd.merge(pred_and_prev_year, df_dict['{}_year_df'.format(year_list[::-1][i+2])], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+    pred_and_three_prev_year = pd.merge(pred_and_two_prev_year, df_dict['{}_year_df'.format(year_list[::-1][i+3])], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+    pred_and_four_prev_year = pd.merge(pred_and_three_prev_year, df_dict['{}_year_df'.format(year_list[::-1][i+4])], on=['Player',"From",'To','Pos','Wt','height_in_inches','Pick','Draft'], how='left')
+    
+    fifth_year_names = [(column,"fifth" + column[len(year_list[::-1][i]):]) for column in pred_and_four_prev_year.ix[:, first_prefix_column:].columns.values if year_list[::-1][i] in column]
+    fourth_year_names = [(column,"fourth" + column[len(year_list[::-1][i+1]):]) for column in pred_and_four_prev_year.ix[:, first_prefix_column:].columns.values if year_list[::-1][i+1] in column]
+    third_year_names = [(column,"third" + column[len(year_list[::-1][i+2]):]) for column in pred_and_four_prev_year.ix[:, first_prefix_column:].columns.values if year_list[::-1][i+2] in column]
+    second_year_names = [(column,"second" + column[len(year_list[::-1][i+3]):]) for column in pred_and_four_prev_year.ix[:, first_prefix_column:].columns.values if year_list[::-1][i+3] in column]
+    first_year_names = [(column,"first" + column[len(year_list[::-1][i+4]):]) for column in pred_and_four_prev_year.ix[:, first_prefix_column:].columns.values if year_list[::-1][i+4] in column]
+    
+    new_names =[]
+    for name in fifth_year_names:
+        new_names.append(name)
+    for name in fourth_year_names:
+        new_names.append(name)
+    for name in third_year_names:
+        new_names.append(name)
+    for name in second_year_names:
+        new_names.append(name)
+    for name in first_year_names:
+        new_names.append(name)
+    
+    # Renames columns
+    pred_and_four_prev_year.rename(columns =  dict(new_names), inplace = True)
+    
+    if i == 0:
+        fifth_year_prediction = pred_and_four_prev_year
+    else:
+        fifth_year_prediction = fifth_year_prediction.append(pred_and_four_prev_year)
+    
+fifth_year_prediction = fifth_year_prediction.fillna(value=0)
+    
+fifth_year_prediction.to_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/predict_fifth_season_using_previous_four_years_all_five_year_combos69.csv")
