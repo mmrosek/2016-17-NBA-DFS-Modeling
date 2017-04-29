@@ -1,0 +1,150 @@
+#Import excel doc with multiple sheets
+import pandas as pd
+import os
+import numpy as np
+
+# Changes Directory
+
+os.chdir("\\Users\\Miller\\Documents\\NBA 2016-17\\Historical NBA Vegas Odds\\")
+
+# Reads in CSV
+
+odds = pd.read_csv("nba odds 2012-13.csv", sep=',')
+
+# Adds new columns to Data Frame
+
+odds['Unnamed: 12']=''
+
+######################
+
+# Renames a column
+
+odds=odds.rename(columns = {'Unnamed: 12':'Open Line'})
+
+odds['Close Line']=''
+
+odds['Open Total']=''
+
+odds['Close Total']=''
+
+###################### 
+
+# Changes all values of "pk" to 0
+
+pk_mask = odds["Open"] == "pk"
+
+odds.ix[pk_mask,"Open"] = int(0)
+
+pk_mask = odds["Close"] == "pk"
+
+odds.ix[pk_mask,"Close"] = int(0)
+
+######################
+
+# Fills new columns with data 
+
+# Loops through each row
+for row in range(odds.shape[0]):
+    # All even rows
+    if row%2==0:
+        if (float(odds.ix[row,"Open"]) > 75.0) & (float(odds.ix[row,"Close"]) > 75.0):
+            odds.ix[row,"Open Total"]=odds.ix[row,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row,"Close"]
+            odds.ix[row,"Open Line"]=odds.ix[row+1,"Open"]
+            odds.ix[row,"Close Line"]=odds.ix[row+1,"Close"]
+            
+        elif (float(odds.ix[row,"Open"]) < 75) & (float(odds.ix[row,"Close"]) < 75):
+            odds.ix[row,"Open Total"]=odds.ix[row+1,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row+1,"Close"]
+            odds.ix[row,"Open Line"]="-" + str(odds.ix[row,"Open"])
+            odds.ix[row,"Close Line"]= "-" + str(odds.ix[row,"Close"])
+            
+        elif (float(odds.ix[row,"Open"]) > 75) & (float(odds.ix[row,"Close"]) < 75):
+            odds.ix[row,"Open Total"]=odds.ix[row,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row+1,"Close"]
+            odds.ix[row,"Open Line"]=odds.ix[row+1,"Open"]
+            odds.ix[row,"Close Line"]= "-" + str(odds.ix[row,"Close"])
+            
+        else:
+            odds.ix[row,"Open Total"]=odds.ix[row+1,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row,"Close"]
+            odds.ix[row,"Open Line"]="-" + str(odds.ix[row,"Open"])
+            odds.ix[row,"Close Line"]=odds.ix[row+1,"Close"]
+    # All odd rows
+    else:
+        if (float(odds.ix[row,"Open"]) > 75) & (float(odds.ix[row,"Close"]) > 75):
+            odds.ix[row,"Open Total"]=odds.ix[row,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row,"Close"]
+            odds.ix[row,"Open Line"]=odds.ix[row-1,"Open"]
+            odds.ix[row,"Close Line"]=odds.ix[row-1,"Close"]
+            
+        elif (float(odds.ix[row,"Open"]) < 75) & (float(odds.ix[row,"Close"]) < 75):
+            odds.ix[row,"Open Total"]=odds.ix[row-1,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row-1,"Close"]
+            odds.ix[row,"Open Line"]= -1*float(odds.ix[row,"Open"])
+            odds.ix[row,"Close Line"]= -1*float(odds.ix[row,"Close"])
+            
+        elif (float(odds.ix[row,"Open"]) > 75) & (float(odds.ix[row,"Close"]) < 75):
+            odds.ix[row,"Open Total"]=odds.ix[row,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row-1,"Close"]
+            odds.ix[row,"Open Line"]=odds.ix[row-1,"Open"]
+            odds.ix[row,"Close Line"]="-" + str(odds.ix[row,"Close"])
+            
+        else:
+            odds.ix[row,"Open Total"]=odds.ix[row-1,"Open"]
+            odds.ix[row,'Close Total']=odds.ix[row,"Close"]
+            odds.ix[row,"Open Line"]="-" + str(odds.ix[row,"Open"])
+            odds.ix[row,"Close Line"]=odds.ix[row-1,"Close"]
+    
+# Date format that needs to be matched
+# 2008-11-23
+
+# Initializes empty column
+odds['date_formatted']=''
+odds.Date
+odds['team_formatted']=''
+str(odds.ix[1000,0])
+# Fills new 'date_formatted', 'team_formatted' column
+for row in range(len(odds)):
+    if (len(str(int(odds.ix[row,0]))) > 3):
+        odds.ix[row,'date_formatted']="2012-"+str(odds.ix[row,0])[0:2]+"-"+str(odds.iloc[row,0])[2:4]
+    else:
+        odds.ix[row,'date_formatted']="2013-0"+str(odds.ix[row,0])[0:1]+"-"+str(odds.iloc[row,0])[1:3]
+   
+    odds.ix[row,'team_formatted']=str(odds.ix[row,'Team'])[0:3].upper()
+    
+    if odds.ix[row,'Team']=="NewOrleans":
+        odds.ix[row,'team_formatted']="NOH"
+    if odds.ix[row,'Team']=="NewYork":
+        odds.ix[row,'team_formatted']='NYK'
+    if odds.ix[row,"Team"]=="Brooklyn":
+        odds.ix[row,"team_formatted"]="BRK"
+    if odds.ix[row,"Team"]=="SanAntonio":
+        odds.ix[row,"team_formatted"]="SAS"
+    if odds.ix[row,"Team"]=="GoldenState":
+        odds.ix[row,"team_formatted"]="GSW"
+    if odds.ix[row,"Team"]=="OklahomaCity":
+        odds.ix[row,"team_formatted"]="OKC"
+
+###############################################################
+
+### Calculates game number for each game for each team
+
+# Initializes "Game Number" column
+odds['Game Number']=''
+
+# Calculates game number for each game for each team and puts value into Game Number column
+for team in odds['team_formatted'].unique():
+    count=0
+    for row in range(len(odds)):
+        if odds.ix[row,'team_formatted']==team:
+            count += 1
+            odds.ix[row,"Game Number"]=count
+
+###############################################################
+
+# Writes completed data set to csv
+
+odds.to_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/nba_odds_2012-13__with_game_number.csv") 
+
+
