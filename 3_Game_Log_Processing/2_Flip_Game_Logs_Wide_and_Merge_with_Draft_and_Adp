@@ -1,0 +1,280 @@
+import pandas as pd
+
+# Read in all_season data set
+
+all_seasons=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_seasons.csv")
+
+##########################################################################
+
+##### Not currently using this section
+
+### Reverse engineering birthday to find players with same name and different bday
+
+# Adds days to each player whose age only contains a year value
+
+#empty_mask=all_seasons.Age.str[3:]==""
+
+#all_seasons.ix[empty_mask,"Age"]=all_seasons.ix[empty_mask,"Age"]+"-000"
+
+
+# Calculates age in days
+
+#all_seasons["age_in_days"]=((all_seasons.Age.str[0:2].astype(int))*365)+(all_seasons.Age.str[3:6].astype(int))
+
+############################################################################
+
+### Duplicate players:
+# Marcus Williams
+# Dee Brown
+# Tim Hardaway Sr.
+# Chris Johnson
+# Tony Mitchell
+# Glen Rice Jr.
+# Glenn Robinson Jr.
+# Chris Wright
+
+# Using to double check duplicate status
+
+test = all_seasons.ix[all_seasons.Player=='Chris Wright',['Player','Tm','Date']]
+
+test.Tm.unique()
+
+### Adding "fake" to names of irrelevant duplicate players
+
+# Marcus Williams
+
+marcus_williams_mask = (all_seasons.Player == "Marcus Williams") & ((all_seasons.Tm == "SAS") | (all_seasons.Tm == "LAC" ))
+
+all_seasons.ix[marcus_williams_mask,"Player"] = "Marcus Elliott Williams"
+
+# Dee Brown
+
+dee_brown_mask = (all_seasons.Player == "Dee Brown") & ((all_seasons.Tm == "UTA") | (all_seasons.Tm == "WAS") | (all_seasons.Tm == "PHO"))
+
+all_seasons.ix[dee_brown_mask,"Player"] = "Dee Daniel Brown"
+
+# Tim Hardaway Sr.
+
+hardaway_mask = (all_seasons.Player == "Tim Hardaway") & ((all_seasons.Tm == "MIA") | (all_seasons.Tm == "GSW") | (all_seasons.Tm == "DAL") | (all_seasons.Tm == "DEN") | (all_seasons.Tm == "IND"))
+
+all_seasons.ix[hardaway_mask,"Player"] = "Tim Hardaway Sr."
+
+# Chris Johnson
+
+# Two masks b/c other CJ also played for Boston
+
+cj_mask_1 = (all_seasons.Player == "Chris Johnson") & ((all_seasons.Tm == "BOS") & (all_seasons.season == 2010))
+
+all_seasons.ix[cj_mask_1,"Player"] = "Chris LSU Johnson"
+
+cj_mask_2 = (all_seasons.Player == "Chris Johnson") & ((all_seasons.Tm == 'POR') | (all_seasons.Tm == "NOH") | (all_seasons.Tm == "MIN"))
+
+all_seasons.ix[cj_mask_2,"Player"] = "Chris LSU Johnson"
+
+# Tony Mitchell
+
+mitchell_mask = (all_seasons.Player == "Tony Mitchell") & (all_seasons.Tm == "DET")
+
+all_seasons.ix[mitchell_mask,"Player"] = "Tony Anthony Mitchell"
+
+# Glen Rice Jr.
+
+rice_mask = (all_seasons.Player == "Glen Rice") & (all_seasons.Tm == "WAS")
+
+all_seasons.ix[rice_mask,"Player"] = "Glen Rice Jr."
+
+# Glenn Robinson Jr.
+
+# Two masks b/c both G-Robs played for PHI
+
+robinson_mask_1 = (all_seasons.Player == "Glenn Robinson") & ((all_seasons.Tm == "PHI") & (all_seasons.season == 2003))
+
+all_seasons.ix[robinson_mask_1,"Player"] = "Glenn Robinson Jr."
+
+robinson_mask_2 = (all_seasons.Player == "Glenn Robinson") & ((all_seasons.Tm == "MIL") | (all_seasons.Tm =="ATL") | (all_seasons.Tm == "SAS"))
+
+all_seasons.ix[robinson_mask_2,"Player"] = "Glenn Robinson Jr."
+
+# Chris Wright
+
+wright_mask = (all_seasons.Player == "Chris Wright") & ((all_seasons.Tm == 'DAL'))
+
+all_seasons.ix[wright_mask,"Player"] = "Chris Georgetown Wright"
+
+#############################################################################
+
+# Flip to wide format
+wide=pd.pivot_table(all_seasons, index="Player", columns=["season","Game_Number"], values=['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GmSc','MP','ORB','PF','STL','TOV',"TRB"])
+
+# Re-creates 'Player' column
+wide = wide.reset_index()
+
+##############################################################################
+
+# Reads in list of all players to play in NBA
+players_full = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/every_player_to_play_in_nba.csv")
+
+##############################################################################
+
+### Edit names of players in list of all players in nba history to mirror changes in "wide"
+
+# Returns list of players in "wide" not in "players_full" == players we edited
+
+#set(wide.Player) - set(players_full.Player)
+
+# Chris Wright
+
+players_full.ix[(players_full.Player == "Chris Wright") & (players_full.College == 'Georgetown University'),"Player"] = "Chris Georgetown Wright"
+
+# Chris Johnson
+
+players_full.ix[(players_full.Player == "Chris Johnson") & (players_full.College == "Louisiana State University"), "Player"] = "Chris LSU Johnson"
+
+# Dee Brown
+
+players_full.ix[(players_full.Player == "Dee Brown") & (players_full.College == "University of Illinois at Urbana-Champaign"), "Player"] = "Dee Daniel Brown"
+
+# Glen Rice Jr.
+
+players_full.ix[(players_full.Player == "Glen Rice") & (players_full.College == "Georgia Institute of Technology"), "Player"] = "Glen Rice Jr."
+
+# Glenn Robinson
+
+players_full.ix[(players_full.Player == "Glenn Robinson") & (players_full.College == "Purdue University"), "Player"] = "Glenn Robinson Jr."
+
+# Tim Hardaway Sr.
+
+players_full.ix[(players_full.Player == "Tim Hardaway") & (players_full.College == "University of Texas at El Paso"), "Player"] = "Tim Hardaway Sr."
+
+# Tony Mitchell
+
+players_full.ix[(players_full.Player == "Tony Mitchell") & (players_full.College == "University of North Texas"), "Player"] = "Tony Anthony Mitchell"
+
+#################################################################################################
+
+# Creating list of players who started career prior to beginning of "wide" data set (1998-1999 season)
+
+too_old_mask = (players_full.From < 1999) 
+
+old_players_list = players_full.ix[too_old_mask,"Player"].unique()
+
+# Removes players in "old_players_list" (players that started their career before 1998-1999 season)
+
+wide = wide[~wide.Player.isin(old_players_list)]  
+
+#################################################################################################
+
+# Reads in draft data
+draft=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_1995_to_2015.csv")
+
+### Duplicate Players in the Draft data set:
+# Corey Brewer
+# Marcus Williams
+# Marcus Thornton
+
+# Returns rows containing duplicated players
+
+draft.Player.duplicated()
+
+test_mask = draft.Player.duplicated()
+
+draft[test_mask]
+
+##############################################################################
+
+### Removing/editing duplicated players
+
+# Remove irrelevant Marcus Thornton from draft data set
+
+thornton_mask = (draft.Player == "Marcus Thornton") & (draft.Pick == 45)
+
+draft=draft[~thornton_mask]
+
+# Remove irrelevant Corey Brewer from draft data set
+
+brewer_mask = (draft.Player == "Corey Brewer") & (draft.Pick == 51)
+
+draft=draft[~brewer_mask]
+
+##############################################################################
+
+### Change name of "Marcus Williams" to "Marcus Elliott Williams" to mirror change made to "wide"
+
+williams_mask = (draft.Player == "Marcus Williams") & (draft.Pick == 33)
+
+draft.ix[williams_mask,"Player"]="Marcus Elliott Williams"
+
+##############################################################################
+
+# How to index multi-indexed DF
+
+#wide_with_draft[("PTS", 2015,10)]
+
+##############################################################################
+
+# Merge "wide" (gamelog) with "draft" 
+
+wide_with_draft=pd.merge(wide, draft, on="Player", how="left") 
+
+#wide_with_draft.to_csv("/Users/Miller/Desktop/test_beaut.csv")
+
+##############################################################################
+
+# Importing ADP data
+
+for year in range(10,17):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/20{0}-{1}_nba_adp.csv".format(year,year+1))
+    one_year["season"] = 2000+year
+    if year == 10:
+        all_adp=one_year
+    else:
+        all_adp = all_adp.append(one_year)
+
+#all_adp.to_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/2010-11_to_2016-17_adp.csv")
+
+# Flip ADP data to wide format
+
+adp_wide=pd.pivot_table(all_adp, index="Name", columns="season", values=['Y!Adp9','ESPNAdp8','CBSAdp',"FanTraxADP"])
+
+adp_wide=adp_wide.reset_index()
+
+#adp_wide.to_csv('/Users/Miller/Documents/NBA 2016-17/ADP Data/all_adp_wide.csv')
+
+############################################################################################
+
+### Merge ADP data with Gamelog data and draft data
+
+gamelog_draft_adp = pd.merge(wide_with_draft, adp_wide, left_on="Player", right_on="Name", how="left")
+
+# Deleting variables needed to create gamelog_draft_adp
+
+del draft
+del wide
+del wide_with_draft
+del all_adp
+del test
+del one_year
+del players_full
+del all_seasons
+del adp_wide
+del williams_mask
+del test_mask
+del thornton_mask
+del too_old_mask
+del brewer_mask
+del cj_mask_1
+del cj_mask_2
+del dee_brown_mask
+del hardaway_mask
+del marcus_williams_mask
+del mitchell_mask
+del rice_mask
+del robinson_mask_1
+del robinson_mask_2
+del wright_mask
+del old_players_list
+del year
+
+#gamelog_draft_adp.to_csv("/Users/Miller/Documents/NBA 2016-17/gamelog_draft_adp.csv")
+
+#gamelog_draft_adp.to_csv("/Users/Miller/Documents/NBA 2016-17/gamelog_draft_adp_test.csv")
