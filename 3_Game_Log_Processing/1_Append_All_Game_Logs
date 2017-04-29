@@ -1,0 +1,40 @@
+import pandas as pd
+
+for year in range(1998,2016):
+    
+    one_season = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/{0}-{1}/{0}-{1}_nba_player_gamelog_with_playoffs.csv".format(year,year+1))
+    
+    # Test for duplicate rows
+    
+    if sum(one_season.duplicated(one_season.columns)) > 0:
+        print("Houston we have a problem")
+        break
+    
+    # Check each row to see if the Date contains a '*'
+    one_season['count'] = one_season.apply(lambda one_season: 1 if '*' in one_season.Date else 0, axis = 1)
+    
+    # Removes asterisk from the end of dates of playoff games
+    for row in range(len(one_season)):
+        if one_season.ix[row,"count"]==1:
+            one_season.ix[row,'Date']=str(one_season.ix[row,'Date'])[:-1]
+    
+    one_season['season']=year
+    
+    # Loop to create game number column
+    
+    for team in one_season.Tm.unique():
+        team_mask = one_season.Tm==team
+        dates = one_season.ix[team_mask,'Date'].unique()
+        dates.sort()
+        for game_number in range(len(dates)):
+            date_mask = one_season.Date==dates[game_number]
+            one_season.ix[(date_mask) & (team_mask),"Game_Number"]=game_number+1
+            
+    if year == 1998:
+        all_seasons = one_season
+    else:
+        all_seasons = all_seasons.append(one_season)
+    
+    print(year)
+    
+all_seasons.to_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_seasons.csv") 
