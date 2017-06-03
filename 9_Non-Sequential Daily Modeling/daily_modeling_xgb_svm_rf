@@ -1,0 +1,232 @@
+import xgboost as xgb
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import GridSearchCV
+from sklearn import preprocessing
+from sklearn import decomposition
+
+from sklearn.cluster import KMeans
+
+# more models
+from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from sklearn import tree
+from sklearn import linear_model
+
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import r2_score
+
+################################################
+
+training_set = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Training Set/daily_training_set_with_priors_4_11.csv')
+training_set = training_set.drop('Unnamed: 0', axis=1)
+
+daily_prediction_set = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/final_pred_set_4_11.csv')
+daily_prediction_set = daily_prediction_set.drop('Unnamed: 0', axis=1)
+
+daily_training_set = training_set.append(daily_prediction_set)
+
+daily_training_set.reset_index(inplace=True)
+daily_training_set.drop(['index','To','From'], axis=1, inplace=True)
+
+daily_training_set = daily_training_set.fillna(value=0)
+
+#set(training_set.columns) - set(daily_prediction_set.columns)
+
+# Converts 'Pos' into a one-hot variable
+#daily_training_set = pd.get_dummies(daily_training_set,columns=['Pos'])
+
+game_number = 80.0
+
+# Creates shuffled list of indices
+# indices = list(range(len(daily_training_set)))
+# np.random.shuffle(indices)
+
+# List of columns used for prediction
+predictor_columns = [col for col in training_set.columns if ("Player" not in col) & ('Team' not in col) & (str(game_number) not in col) & ('Unnamed' not in col) & ('From' not in col) & ('To' not in col)]
+
+#######################################################################
+
+# Convert dtypes of predictor columns to float
+daily_training_set[predictor_columns] = daily_training_set[predictor_columns].astype(float)
+    
+### Scales, centers, and performs PCA on the featurs and splits them into test and train sets
+features = np.array(daily_training_set.ix[:,predictor_columns])
+
+# Scales and centers the features
+features_std = preprocessing.scale(features)
+        
+ # Initializes PCA function
+pca = decomposition.PCA(n_components=200)
+        
+# Finds principal components
+pca.fit(features_std)
+    
+#The amount of variance that each PC explains
+var= pca.explained_variance_ratio_
+    
+#Cumulative Variance explained by number of components
+var1=np.cumsum(np.round(pca.explained_variance_ratio_, decimals=4)*100)
+
+### 80 components corresponds to 95.41% of variance ###
+
+# Initializes PCA function
+pca = decomposition.PCA(n_components=80)
+        
+# Finds principal components
+pca.fit(features_std)
+
+# Creates new array containing principal components
+features_std_pca=np.array(pca.fit_transform(features_std))
+
+# Adds clusters as a feature
+clusters = np.array([KMeans(n_clusters=5).fit(features_std_pca).labels_])
+features_std_pca = np.append(features_std_pca, clusters.T, axis=1)
+
+# Creates training and testing sets
+# training_features = np.array(features_std_pca[indices[int(len(daily_training_set)/10):]])
+# testing_features = np.array(features_std_pca[indices[0:int(len(daily_training_set)/10)]])
+
+training_features = np.array(features_std_pca[:len(training_set)])
+prediction_features = np.array(features_std_pca[len(training_set):])
+
+#########################################################
+
+stats = ["('FD_POINTS', {})".format(game_number), "('DK_POINTS', {})".format(game_number)]
+
+stat = stats[0]
+
+#for stat in stats:
+
+#Finds column number of stat we are trying to predict
+target_col_list = [i for i in range(len(daily_training_set.columns)) if stat in daily_training_set.columns[i]]
+target_col_index = int(target_col_list[0])
+print(stat,target_col_index)
+
+### Creates training and testing sets for targets
+
+# Creates target vector only for rows of players who have played second season already
+target = np.array(daily_training_set.ix[:(len(training_set)-1),daily_training_set.columns[target_col_index]])
+
+#store mean and variance of training_targets for pre and post processing
+y_mean = np.mean(target,axis=0)
+
+# Have to wrap training targets to prevent 'float has no sqrt' error // Axis=0 to calculate stdev for each column (feature)
+y_std = np.std(np.float32(target),axis=0)
+
+# center and normalize Y values
+target_std = np.divide(np.subtract(target,y_mean),y_std)
+
+# Creates training and testing target vectors
+# training_targets = np.array(target_std[indices[int(len(daily_training_set)/10):]])
+# testing_targets = np.array(target_std[indices[:int(len(daily_training_set)/10)]])
+
+training_targets = np.array(target_std)
+
+#####################################################
+
+    # generating output for XGB
+print("Trying XGBs")
+# Using grid search to test many different parameter values
+grid_search = GridSearchCV(estimator = xgb.XGBRegressor(),
+	param_grid={'max_depth':[2,3],
+				'learning_rate':[.06,.07],
+				'min_child_weight':[6,7,8], 'reg_lambda':[1,1.5], 'subsample':[0.9,1], 'colsample_bytree':[0.9,1]}, cv = 5)
+
+# Finds best possible model for given out range of parameter values passed in previous line
+grid_search.fit(training_features,training_targets)
+
+best_XGB = grid_search.best_estimator_
+
+print("\n\nbest XGB:\n" + str(best_XGB.get_params) + "\n\n")
+
+print("XGB best r2:\t" + str(grid_search.best_score_) + '\n')
+
+XGB_train_preds = best_XGB.predict(training_features)
+
+XGB_pred_preds = best_XGB.predict(prediction_features)
+
+#r2 = r2_score(testing_targets, XGB_test_preds)
+
+######################################################################################
+
+
+#generating output for SVM
+print("Trying SVMs")
+grid_search = GridSearchCV(estimator = SVR(),
+	param_grid={'kernel':['linear','poly','rbf'],
+				'epsilon':[0.2,0.25,0.3],
+				'shrinking':[True]}, cv = 5)
+
+# Other potential kernels: 'poly', 'rbf'
+
+grid_search.fit(training_features,training_targets)
+
+best_SVM = grid_search.best_estimator_
+print("\n\nbest SVM:\n" + str(best_SVM.get_params) + "\n\n")
+#best_SVM.fit(training_features,training_targets)
+print("SVM best r2:\t" + str(grid_search.best_score_) + "\n")
+
+SVM_train_preds = best_SVM.predict(training_features)
+
+SVM_pred_preds = best_SVM.predict(prediction_features)
+
+# #r2 = r2_score(testing_targets, SVM_test_preds)
+
+###################################################################################################
+
+# generating output for random forest
+print("Trying Random Forests")
+grid_search = GridSearchCV(estimator = RandomForestRegressor(),
+	param_grid={'n_estimators':[20,25,30], 
+				'min_samples_leaf':[8,10], 
+				'max_depth':[2,3,5], 
+				'max_features':['auto']}, cv = 5)
+
+grid_search.fit(training_features,training_targets)
+
+best_RF = grid_search.best_estimator_
+print("\n\nbest random forest:\n" + str(best_RF.get_params) + "\n\n")
+#best_RF.fit(training_features,training_targets)
+print("RF best r2:\t" + str(grid_search.best_score_) + "\n")
+
+RF_train_preds = best_RF.predict(training_features)
+
+# RF_test_preds = best_RF.predict(testing_features)
+
+RF_pred_preds = best_RF.predict(prediction_features)
+
+# r2 = r2_score(testing_targets, RF_test_preds)
+
+######################################################################################
+
+##### Creates new array containing only predicted values from 3 models to be fed into decision tree
+
+# Concatenates predictions for prediction, training, and testing sets into one array
+complete_xgb_preds = np.concatenate((XGB_train_preds,XGB_pred_preds), axis=0)
+
+# Undoing normalization
+complete_xgb_preds_denormalized = np.add(np.multiply(complete_xgb_preds, y_std), y_mean)
+
+# # Concatenates predictions for prediction, training, and testing sets into one array
+# complete_svm_preds = np.concatenate((SVM_pred_preds,SVM_train_preds), axis=0)
+
+# # Undoing normalization
+# complete_svm_preds_denormalized = np.add(np.multiply(complete_svm_preds, y_std), y_mean)
+
+# #Concatenates predictions for prediction, training, and testing sets into one array
+# complete_rf_preds = np.concatenate((RF_pred_preds,RF_train_preds), axis=0)
+
+# # Undoing normalization
+# complete_rf_preds_denormalized = np.add(np.multiply(complete_rf_preds, y_std), y_mean)
+
+# Appends prediction arrays to dataset
+daily_training_set['xgb_pred_{0}'.format(stat)] = complete_xgb_preds_denormalized
+# daily_training_set['svm_pred_{0}'.format(stat)] = complete_svm_preds_denormalized
+# daily_training_set['rf_pred_{0}'.format(stat)] = complete_rf_preds_denormalized
+# daily_training_set['avg_pred_{0}'.format(stat)] = (complete_rf_preds_denormalized + complete_xgb_preds_denormalized)/2
+
+todays_preds = daily_training_set[daily_training_set.season == 2016]
+
+todays_preds.to_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/daily_predictions_4_11.csv")
