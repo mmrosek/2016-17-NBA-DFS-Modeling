@@ -1,0 +1,173 @@
+import pandas as pd
+import numpy as np
+import datetime
+
+# Read in all_seasons data set
+seasons_as_rows_thru_next_game=pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Training Set/daily_training_set_thru_next_game_no_adp_draft_2_25.csv')
+
+seasons_as_rows_thru_next_game = seasons_as_rows_thru_next_game.drop('Unnamed: 0', axis=1)
+
+#########################################################################################
+
+### Merges seasons_as_rows_thru_next_game with draft data
+
+# Reads in draft data
+draft=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Draft Data/nba_draft_1995_to_2015.csv")
+
+### Duplicate Players in the Draft data set:
+# Corey Brewer
+# Marcus Williams
+# Marcus Thornton
+
+# Returns rows containing duplicated players
+
+#draft.Player.duplicated()
+#test_mask = draft.Player.duplicated()
+#draft[test_mask]
+
+################################################################################################
+
+### Removing/editing duplicated players
+
+# Remove irrelevant Marcus Thornton from draft data set
+
+thornton_mask = (draft.Player == "Marcus Thornton") & (draft.Pick == 45)
+
+draft=draft[~thornton_mask]
+
+# Remove irrelevant Corey Brewer from draft data set
+
+brewer_mask = (draft.Player == "Corey Brewer") & (draft.Pick == 51)
+
+draft=draft[~brewer_mask]
+
+#################################################################################################
+
+### Change name of "Marcus Williams" to "Marcus Elliott Williams" to mirror change made to "wide"
+
+williams_mask = (draft.Player == "Marcus Williams") & (draft.Pick == 33)
+
+draft.ix[williams_mask,"Player"]="Marcus Elliott Williams"
+
+#################################################################################################
+
+
+### Merge with draft data
+
+seasons_as_rows_draft = pd.merge(seasons_as_rows_thru_next_game, draft, on="Player", how='left')
+
+seasons_as_rows_draft = seasons_as_rows_draft.drop('Yrs',axis=1)
+
+###########################################################################################
+
+### Merging ADP data
+
+# Importing ADP data
+
+for year in range(10,17):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/ADP Data/20{0}-{1}_nba_adp.csv".format(year,year+1))
+    one_year["season"] = 2000+year
+    if year == 10:
+        all_adp=one_year
+    else:
+        all_adp = all_adp.append(one_year)
+
+adp_wide=pd.pivot_table(all_adp, index=["Name", 'season'], values=['Y!Adp9','ESPNAdp8'])
+
+adp_wide = adp_wide.reset_index()
+
+# Merge Step
+seasons_as_rows_draft_adp = pd.merge(seasons_as_rows_draft, adp_wide, left_on=['Player', 'season'], right_on=['Name', 'season'], how='left')
+
+# Creates one hot for whether or not there was adp present
+seasons_as_rows_draft_adp['adp_data_present']=np.where(seasons_as_rows_draft_adp.ix[:,'season'].astype(int) < 2010, 0, 1)
+
+# Drops "Name" and 'Draft' column
+seasons_as_rows_draft_adp.drop(["Name",'Draft'], axis=1, inplace = True)
+
+# Fills NA "Pick" cells with 100
+seasons_as_rows_draft_adp.ix[:,'Pick'] = seasons_as_rows_draft_adp.ix[:,'Pick'].fillna(value=100)
+
+# Fills NA ADP cells with 300 (Create variable indicating whether ADP stats were available?)
+seasons_as_rows_draft_adp.ix[:,['ESPNAdp8', 'Y!Adp9']] = seasons_as_rows_draft_adp.ix[:,['ESPNAdp8', 'Y!Adp9']].fillna(value=300)
+
+### Reads in dataset of all players to play in NBA history with relevant duplicates fixed
+players_full = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/every_player_in_nba_history_no_duplicates_for_1998_plus.csv")
+
+seasons_as_rows_draft_adp_size = pd.merge(seasons_as_rows_draft_adp, players_full, on='Player', how='left')
+
+#####################################################################################################################
+
+###### New --> need to get age in the training set
+
+### Calculating age for each player for each year at start of season (each row essentially)
+
+birthday_vector = pd.to_datetime(seasons_as_rows_draft_adp_size['Birth Date'])
+
+# Calculates vector of "season" column as datetime object
+season_vector = pd.to_datetime(seasons_as_rows_draft_adp_size['season'].astype(int), yearfirst=True, format="%Y")
+
+# Accounts for difference in season_vector and start of actual season (season_vector starts on Jan. 1)
+days_from_jan_1_to_start_of_season = datetime.timedelta(days = 300)
+
+# Creates vector of datetime objects containing age in number of days at start of season
+age_at_start_of_season_vector = (season_vector - birthday_vector) + days_from_jan_1_to_start_of_season
+
+# Creates list of ages at start of season without the datetime formatting
+formatted_age_list = [str(age)[:5] if len(str(age))==19 else str(age)[:4] for age in age_at_start_of_season_vector]
+
+# Creates new column for age at start of season
+seasons_as_rows_draft_adp_size['age_at_start_of_season'] = formatted_age_list
+
+# Removes unnamed columns
+unnamed_cols = list(seasons_as_rows_draft_adp_size.columns[seasons_as_rows_draft_adp_size.columns.str.contains("Unnamed")])
+seasons_as_rows_draft_adp_size.drop(unnamed_cols,axis=1,inplace=True)
+
+# Removes unwanted 'Ht' column
+seasons_as_rows_draft_adp_size.drop(['Ht','College','Birth Date',],axis=1,inplace=True)
+
+############
+
+# Fills remaining NA cells with 0 
+seasons_as_rows_draft_adp_size = seasons_as_rows_draft_adp_size.fillna(value=0)
+
+#seasons_as_rows_draft_adp_size.drop(['Unnamed: 0','From', 'To','Birth Date','College','Ht'], axis=1, inplace=True)
+
+# Converts 'Pos' into a one-hot variable
+seasons_as_rows_draft_adp_size = pd.get_dummies(seasons_as_rows_draft_adp_size,columns=['Pos'])
+
+######################################################################################################
+
+# Reading in prior data sets
+
+first_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_first_year_priors.csv")
+first_year_priors = first_year_priors.ix[:,['Player','first_year_season' , "xgb_pred_first_year_('reg_szn_total_fd_pts', '')" , "rf_pred_first_year_('reg_szn_total_fd_pts', '')" , "avg_pred_first_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_first_year_('reg_szn_total_dk_pts', '')" , "rf_pred_first_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_first_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_first_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_first_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_first_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_first_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_first_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_first_year_('DK_prior_^0.7_of_total', '')"]]
+first_year_priors.rename(columns={'first_year_season':'season' , "xgb_pred_first_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_first_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_first_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_first_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_first_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_first_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_first_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_first_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_first_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_first_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_first_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_first_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+second_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_second_year_priors.csv")
+second_year_priors = second_year_priors.ix[:,['Player','second_year_season' , "xgb_pred_second_year_('reg_szn_total_fd_pts', '')" , "rf_pred_second_year_('reg_szn_total_fd_pts', '')" , "avg_pred_second_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_second_year_('reg_szn_total_dk_pts', '')" , "rf_pred_second_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_second_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_second_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_second_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_second_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_second_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_second_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_second_year_('DK_prior_^0.7_of_total', '')"]]
+second_year_priors.rename(columns={'second_year_season':'season' , "xgb_pred_second_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_second_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_second_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_second_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_second_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_second_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_second_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_second_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_second_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_second_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_second_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_second_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+third_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_third_year_priors.csv")
+third_year_priors = third_year_priors.ix[:,['Player','third_year_season' , "xgb_pred_third_year_('reg_szn_total_fd_pts', '')" , "rf_pred_third_year_('reg_szn_total_fd_pts', '')" , "avg_pred_third_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_third_year_('reg_szn_total_dk_pts', '')" , "rf_pred_third_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_third_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_third_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_third_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_third_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_third_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_third_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_third_year_('DK_prior_^0.7_of_total', '')"]]
+third_year_priors.rename(columns={'third_year_season':'season' , "xgb_pred_third_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_third_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_third_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_third_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_third_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_third_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_third_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_third_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_third_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_third_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_third_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_third_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+fourth_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fourth_year_priors.csv")
+fourth_year_priors = fourth_year_priors.ix[:,['Player','fourth_year_season' , "xgb_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_fourth_year_('reg_szn_total_dk_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_fourth_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_fourth_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('DK_prior_^0.7_of_total', '')"]]
+fourth_year_priors.rename(columns={'fourth_year_season':'season' , "xgb_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+fifth_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fifth_year_priors.csv")
+fifth_year_priors = fifth_year_priors.ix[:,['Player','fifth_year_season' , "xgb_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_fifth_year_('reg_szn_total_dk_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_fifth_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_fifth_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('DK_prior_^0.7_of_total', '')"]]
+fifth_year_priors.rename(columns={'fifth_year_season':'season' , "xgb_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+all_priors=first_year_priors.append(second_year_priors).append(third_year_priors).append(fourth_year_priors).append(fifth_year_priors)
+
+final_training_set = pd.merge(seasons_as_rows_draft_adp_size, all_priors, on=['Player','season'], how = 'left')
+
+### Should make ADP and 'pick' categorical and include a category for when adp didnt exist
+
+final_training_set.to_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Training Set/daily_training_set_with_priors_2_25.csv')
+
+
+
+

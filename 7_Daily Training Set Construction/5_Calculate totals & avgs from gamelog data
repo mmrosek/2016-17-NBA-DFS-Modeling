@@ -1,0 +1,214 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+import re
+
+# Read in all_seasons data set with career games,minutes, and vegas line data
+all_seasons=pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/4_all_szns_days_and_games_since_last_game_categorical_w_career_stats_entering_next_game_and_szn_w_vegas.csv')
+
+all_seasons = all_seasons.drop('Unnamed: 0', axis=1)
+
+###################################################################################
+
+###################################################################################
+
+### Subset all_seasons to only include number of games + 1 that have been played in 2016-17 szn
+
+### could possibly subset the number of games included in next_game_in_2016 to be fewer to include more rows
+
+    # I.e. If the next game is the 60th game, if we determine that only the previous 40 games are relevant, then every 40 game stretch that ends with a played game could be used
+
+    # Key thing to determine --> how many games back matters --> may want to figure out after initial model set up like this is online since this is technically the most representative sample
+
+next_game_in_2016 = 64
+
+length_of_2016_szn_mask = all_seasons.Game_Number <= next_game_in_2016
+
+games_as_rows_up_to_most_recent_2016_game = all_seasons[length_of_2016_szn_mask]
+
+############################################################################################
+del all_seasons
+############################################################################################
+
+# Creates dataframe with each row corresponding to a season for each player/season combo
+seasons_as_rows=pd.pivot_table(games_as_rows_up_to_most_recent_2016_game, index=["season","Player"], columns=["Game_Number"], values=['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GmSc','MP','ORB','PF','STL','TOV',"TRB",'GS','days_since_last_game','team_games_missed_since_last_game', 'career_games_played_entering_next_game','career_mins_played_entering_next_game', 'double_double', 'triple_double', 'fd_pts', 'dk_pts', 'fd_pts_per_min', 'dk_pts_per_min', 'career_fd_pts_per_min_entering_next_game','career_dk_pts_per_min_entering_next_game', 'career_fd_pts_entering_next_game', 'career_dk_pts_entering_next_game','career_fd_pts_per_game_entering_next_game', 'career_dk_pts_per_game_entering_next_game','back_to_back','one_day_off', 'two_days_off', 'three-four_days_off','five-seven_days_off', 'eight_days_plus _off','first_game_of_season', 'missed_no_games','missed_one_game', 'missed_two_games', 'missed_three-four_games','missed_five-seven_games', 'missed_eight_plus_games', 'Close Line','Close Total','Location_@', 'close_game', 'small_win', 'medium_win', 'big_win', 'small_loss', 'medium_loss', 'big_loss'])
+
+# Captializes PTS in columns so they pass through filter properly to be deleted
+pts_dict={'fd_pts':'FD_POINTS' ,'dk_pts':'DK_POINTS', 'fd_pts_per_min':'FD_POINTS_per_minute', 'dk_pts_per_min':'DK_POINTS_per_minute', 'Location_@':'location_@'}
+
+########### --> Change PTS to POINTS 
+
+# Changes column names
+seasons_as_rows.rename(columns=pts_dict, inplace=True)
+
+# Creates new df with correct columns
+seasons_as_rows = seasons_as_rows.reset_index()
+
+# Mask that retains players who played in the game number that is about to played in the 2016-17 szn
+played_upcoming_game_mask = ~seasons_as_rows[('MP',next_game_in_2016)].isnull()
+
+seasons_as_rows_played_upcoming_game = seasons_as_rows[played_upcoming_game_mask]
+
+####################################################################################################
+del games_as_rows_up_to_most_recent_2016_game
+del seasons_as_rows
+####################################################################################################
+
+### Calculates weighted averages of 'stats' and total, medians and flat averages
+
+# Done to be able to reuse weighted average code
+df = seasons_as_rows_played_upcoming_game.copy()
+
+del seasons_as_rows_played_upcoming_game
+
+start_of_stat=1
+
+stats = ['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GS', 'GmSc','MP','ORB','PF','STL','TOV',"TRB",'FD_POINTS','DK_POINTS','FD_POINTS_per_minute','DK_POINTS_per_minute']
+
+years = range(1998,2016)
+
+weights = [0.2,0.3,0.5,0.8,1.2]
+
+start = time.time() 
+######################
+for weight in weights:
+    
+    print(weight)
+
+    for year in years:
+        
+        #print(year,weight)
+    
+        # Calculates the number of games in a season
+        num_of_games_in_season = next_game_in_2016-1
+        
+        # Creates increment value for weight vector
+        increment = weight / (num_of_games_in_season-1)
+                
+        # Creates weight vector
+        weight_vector = np.array([(1-weight/2+(increment*game)) for game in range(num_of_games_in_season)])
+        
+        # Using first stat [PTS usually] columns to determine which games each player played in, could be any stat in theory
+        start_of_first_stat = np.argmax(df.columns.get_level_values(0).str.contains(stats[0],regex=False) > 0)
+        
+        # Calculates last column ("end_of_year") containing data for stat/year combo in question
+        end_of_first_stat = start_of_first_stat + num_of_games_in_season
+        
+        # Vectorized calculation for weight_resdistribution (missing_weight / present_weight)
+        weight_resdistribution=np.array(np.where(df.ix[df.season == year,start_of_first_stat:end_of_first_stat].isnull().sum(axis=1) == num_of_games_in_season , 0, np.sum((pd.isnull(df.ix[df.season == year,start_of_first_stat:end_of_first_stat]) * weight_vector),axis=1)/np.sum((~pd.isnull(df.ix[df.season == year,start_of_first_stat:end_of_first_stat]) * weight_vector),axis=1)))
+        
+        for stat in stats:
+              
+            start_of_stat = np.argmax(df.columns.get_level_values(0).str.contains(stat,regex=False) > 0)
+        
+            # Calculates last column ("end_of_stat") containing data for stat/year combo in question
+            end_of_stat = start_of_stat + num_of_games_in_season
+            
+            # Creates list of columns that contain the string 
+            stat_cols = [column for column in df.columns if stat in str(column)]
+            
+            if weight == weights[0]:
+                
+                # Calculates avg, total and median stats for the szn up to the upcoming game
+                df.ix[df.season == year, 'full_szn_avg_{}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].mean(axis=1))
+                df.ix[df.season == year,'full_szn_median_{}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].median(axis=1))
+                df.ix[df.season == year, 'full_szn_total_{0}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].sum(axis=1))
+                       
+            ### Converts NaN values to 0 then multiplies the row values by the newly calculated weight vector 
+            df.ix[df.season==year,'wtd_avg_{0}_{1}'.format(weight,stat.lower())] = np.array(np.sum((((~(df.ix[df.season == year,start_of_stat:end_of_stat].isnull()) * weight_vector)).multiply(weight_resdistribution,axis='index') + (~(df.ix[df.season == year,start_of_stat:end_of_stat].isnull()) * weight_vector)) * df.ix[df.season == year,start_of_stat:end_of_stat],axis=1)/num_of_games_in_season)
+
+end = time.time()
+print(end - start)
+
+############################################################################################
+###########################################################################################################################################
+
+# Calculates avg, total and median for each stat over each 'stretch' in game_stretches
+
+game_stretches = [1,2,3,5,10,15,25,35,45]
+
+# Calculates the number of games in a season
+num_of_games_in_season = next_game_in_2016-1
+
+start = time.time()
+for stat in stats:
+    
+    start_of_stat = np.argmax(df.columns.get_level_values(0).str.contains(stat,regex=False) > 0)
+        
+    # Calculates last column ("end_of_stat") containing data for stat/year combo in question
+    end_of_stat = start_of_stat + num_of_games_in_season
+    
+    for stretch in game_stretches:
+        
+        # Calculates avg, total and median stats for the szn up to the upcoming game
+        df.ix[:, 'last{0}_avg_{1}'.format(stretch,stat.lower())] = np.array(df.ix[:,end_of_stat-stretch:end_of_stat].mean(axis=1))
+        df.ix[:, 'last{0}_median_{1}'.format(stretch,stat.lower())] = np.array(df.ix[:,end_of_stat-stretch:end_of_stat].median(axis=1))
+        df.ix[:, 'last{0}_total_{1}'.format(stretch,stat.lower())] = np.array(df.ix[:,end_of_stat-stretch:end_of_stat].sum(axis=1))
+
+end = time.time()
+print(end - start)
+
+############################################################################################
+############################################################################################
+
+### Drop all gamelog data except for the upcoming game number
+
+# Removes multi-indexing from column names and creates list of column names 
+seasons_as_rows = pd.DataFrame(df.to_records())
+
+# Drops 'index' column
+seasons_as_rows = seasons_as_rows.drop('index',axis=1)
+
+#col_copy = cols.copy()
+
+cols = seasons_as_rows.columns.tolist()
+
+stats_with_game_nums_to_remove = ['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GS','GmSc','MP','ORB','PF','STL','TOV',"TRB",'POINTS']
+
+# Creates list of lower case stats to use to find columns that don't have associated game numbers in column headings
+stats_lower = [stat.lower() for stat in stats_with_game_nums_to_remove]
+
+### Createst list of column names containing gamelog data from game 1 through game before upcoming game
+cols_to_remove = []
+# Pass np.argmax function to skip over season and player column names
+for i in range(np.argmax(seasons_as_rows.columns.str.contains('Player'))+1,len(cols)):
+    # Checks if any stat in the list of stats is contained in the given column name
+    if (not any(stat in cols[i] for stat in stats_lower)) | ('days' in cols[i]) | ('career' in cols[i]) | ('team_games_missed' in cols[i]) | ("DK_POINTS" in cols[i]) | ("FD_POINTS" in cols[i]):
+        # Checks to ensure that the last portion of the string (game number) is less than next_game_in_2016
+        if int(re.search('\d+',str(cols[i])[-5:]).group(0)) < next_game_in_2016:
+            #print(int(re.search('\d+',str(cols[i])[-5:]).group(0)))
+            cols_to_remove.append(cols[i])
+            #print(cols[i])
+
+# Drops gamelog columns
+seasons_as_rows = seasons_as_rows.drop(cols_to_remove, axis=1)
+
+cols_list = seasons_as_rows.columns.tolist()
+
+# Removes extra spaces, commas and quotation marks from non-next game columns that were added from removing multi-indexing in cols_list
+for i in range(len(cols_list)):
+    if (i == 0) | (i == 1 ) | ('days' in cols_list[i]) | ('career' in cols_list[i]) | ('location' in cols_list[i]) | ('missed' in cols_list[i]) | ("back_to_back" in cols_list[i]) | ('line' in cols_list[i]) | ('close' in cols_list[i]) | ('Total' in cols_list[i]) | ("Line" in cols_list[i]) | ('one_day_off' in cols_list[i]) | ("first_game_of_season" in cols_list[i]) | ('win' in cols_list[i]) | ('loss' in cols_list[i]) | (any(stat in cols_list[i] for stat in stats_lower)):
+        #print(cols_list[i].partition("(")[-1].rpartition(",")[0].strip("'"))
+        cols_list[i]=cols_list[i].partition("(")[-1].rpartition(",")[0].strip("'")
+
+# Creates dictionary that can be used to rename column names in seasons_as_rows
+rename_columns_dict = {old:new for (old,new) in zip(seasons_as_rows.columns,cols_list)}      
+
+# Renames columns to remove extra spaces, commas and quotation marks from non-next game columns
+seasons_as_rows.rename(columns=rename_columns_dict, inplace=True)
+
+# Fills remaining NA cells with 0 --> do after weighted average to avoid having to re-write weighted average code
+seasons_as_rows = seasons_as_rows.fillna(value=0)
+
+#seasons_as_rows.to_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/daily_training_set_thru_next_game_no_adp_draft.csv')
+
+# New
+seasons_as_rows.to_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Training Set/daily_training_set_thru_next_game_no_adp_draft_3_10.csv')
+
+
+### Left to do:
+
+# Try exponential weighted average
+
+

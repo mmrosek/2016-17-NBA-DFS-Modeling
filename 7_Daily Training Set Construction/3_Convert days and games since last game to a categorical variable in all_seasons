@@ -1,0 +1,76 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+import re
+
+# Read in all_seasons data set
+#all_seasons=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_seasons_days_games_since_last_game_with_career_games_mins.csv")
+
+all_seasons=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2_all_szns_days_and_games_since_last_game_w_career_stats_entering_next_game_and_szn.csv")
+
+### Converts days_since_last_game into a categorical variable  ###
+
+# Back to back
+all_seasons['back_to_back'] = np.array([1 if all_seasons.ix[row,'days_since_last_game'] == 1 else 0 for row in range(len(all_seasons))])
+
+# One day off
+all_seasons['one_day_off'] = np.array([1 if all_seasons.ix[row,'days_since_last_game'] == 2 else 0 for row in range(len(all_seasons))])
+
+# Two day off
+all_seasons['two_days_off'] = np.array([1 if all_seasons.ix[row,'days_since_last_game'] == 3 else 0 for row in range(len(all_seasons))])
+
+# Three/four days off
+all_seasons['three-four_days_off'] = np.array([1 if (all_seasons.ix[row,'days_since_last_game'] == 4) | (all_seasons.ix[row,'days_since_last_game'] == 5) else 0 for row in range(len(all_seasons))])
+
+# Five-seven days off
+all_seasons['five-seven_days_off'] = np.array([1 if (all_seasons.ix[row,'days_since_last_game'] == 6) | (all_seasons.ix[row,'days_since_last_game'] == 7) | (all_seasons.ix[row,'days_since_last_game'] == 8) else 0 for row in range(len(all_seasons))])
+
+# eight_plus_days_off
+all_seasons['eight_days_plus_off'] = np.array([1 if (all_seasons.ix[row,'days_since_last_game'] > 8) & (all_seasons.ix[row,'days_since_last_game'] != 100) else 0 for row in range(len(all_seasons))])
+
+all_seasons['first_game_of_season'] = np.array([1 if all_seasons.ix[row,'days_since_last_game'] == 100 else 0 for row in range(len(all_seasons))])
+
+#########################################################################################################
+
+### Converts team_games_missed_since_last_game into a categorical variable
+
+# Missed no games
+all_seasons['missed_no_games'] = np.array([1 if all_seasons.ix[row,'team_games_missed_since_last_game'] == 0 else 0 for row in range(len(all_seasons))])
+
+# Missed one game
+all_seasons['missed_one_game'] = np.array([1 if all_seasons.ix[row,'team_games_missed_since_last_game'] == 1 else 0 for row in range(len(all_seasons))])
+
+# Missed two games
+all_seasons['missed_two_games'] = np.array([1 if all_seasons.ix[row,'team_games_missed_since_last_game'] == 2 else 0 for row in range(len(all_seasons))])
+
+# Missed 3-4 games
+all_seasons['missed_three-four_games'] = np.array([1 if (all_seasons.ix[row,'team_games_missed_since_last_game'] == 3) | (all_seasons.ix[row,'team_games_missed_since_last_game'] == 4) else 0 for row in range(len(all_seasons))])
+
+# Missed 5-7 games
+all_seasons['missed_five-seven_games'] = np.array([1 if (all_seasons.ix[row,'team_games_missed_since_last_game'] == 5) | (all_seasons.ix[row,'team_games_missed_since_last_game'] == 6) | (all_seasons.ix[row,'team_games_missed_since_last_game'] == 7) else 0 for row in range(len(all_seasons))])
+
+# Missed 8+ games
+all_seasons['missed_eight_plus_games'] = np.array([1 if (all_seasons.ix[row,'team_games_missed_since_last_game'] > 7) else 0 for row in range(len(all_seasons))])
+
+# Converts 'Location' into a one-hot variable
+all_seasons = pd.get_dummies(all_seasons,columns=['Location'])
+
+#all_seasons.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/3_all_szns_days_and_games_since_last_game_categorical_w_career_stats_entering_next_game_and_szn.csv')
+
+
+
+######################################################
+
+### Old
+
+# # Creates list of ones and zeros based on whether days since last game is > 8 or first game of season
+# eight_games_plus_list = []
+# for row in range(len(all_seasons)):
+#     if int(all_seasons.ix[row,'team_games_missed_since_last_game']) > 7:
+#         eight_games_plus_list.append(1)
+#     else:
+#         eight_games_plus_list.append(0)
+
+# # eight_plus_days_off
+# all_seasons['missed_eight_plus_games'] = np.array(eight_games_plus_list)

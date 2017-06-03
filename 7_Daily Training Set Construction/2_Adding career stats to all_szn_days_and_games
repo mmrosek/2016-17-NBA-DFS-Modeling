@@ -1,0 +1,156 @@
+import pandas as pd
+import numpy as np
+import time
+import multiprocessing
+
+
+# Calculating career games and minutes for each game
+
+all_seasons = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/1_all_szns_days_and_games_since_last_game.csv')
+all_seasons = all_seasons.drop(['Unnamed: 0','index'],axis=1)
+
+# Sorts dataframe by Player and then by Age
+all_seasons = all_seasons.sort_values(['Player','Age'], axis=0)
+
+all_seasons = all_seasons.reset_index()
+
+### Calculates double doubles and triple doubles ###
+
+all_seasons['double_double'] = np.where(np.sum(all_seasons.ix[:,["PTS","TRB",'AST',"STL",'BLK',]] >= 10, axis=1) == 2, 1, 0)
+
+all_seasons['triple_double'] = np.where(np.sum(all_seasons.ix[:,["PTS","TRB",'AST',"STL",'BLK',]] >= 10, axis=1) >= 3, 1, 0)
+
+######################################################
+
+# Imputing 2 for number of minutes played by Ryan Hollins and Elton Brand where bref has no minute value
+all_seasons.ix[all_seasons.MP.isnull(),'MP']=2
+
+# Imputing 0.4 for all rows with minute values of 0
+all_seasons.ix[all_seasons.MP==0,'MP']=0.4
+
+######################################################
+
+### Calculates fd and dk pts and pts per min for each game
+
+all_seasons['fd_pts']=np.array(all_seasons['PTS'] + 2*all_seasons['BLK'] + 1.2*all_seasons['TRB'] + 2*all_seasons['STL'] + 1.5*all_seasons['AST'] - all_seasons['TOV'])
+
+all_seasons['dk_pts']=np.array(all_seasons['PTS'] + 2*all_seasons['BLK'] + 1.25*all_seasons['TRB'] + 2*all_seasons['STL'] + 1.5*all_seasons['AST'] - 0.5*all_seasons['TOV'] + 0.5*all_seasons['3P'] + 1.5*all_seasons['double_double'] + 3*all_seasons['triple_double'])
+
+all_seasons['fd_pts_per_min']=all_seasons['fd_pts']/all_seasons['MP']
+
+all_seasons['dk_pts_per_min']=all_seasons['dk_pts']/all_seasons['MP']
+
+
+######################################################
+
+# Initializes new columns
+all_seasons['career_fd_pts_per_min_entering_next_game']=0
+all_seasons['career_dk_pts_per_min_entering_next_game']=0
+all_seasons['career_fd_pts_entering_next_game']=0
+all_seasons['career_dk_pts_entering_next_game']=0
+all_seasons['career_games_played_entering_next_game']=0
+all_seasons['career_mins_played_entering_next_game']=0
+
+all_seasons['career_fd_pts_per_min_entering_next_szn']=0
+all_seasons['career_dk_pts_per_min_entering_next_szn']=0
+all_seasons['career_fd_pts_entering_next_szn']=0
+all_seasons['career_dk_pts_entering_next_szn']=0
+all_seasons['career_games_played_entering_next_szn']=0
+all_seasons['career_mins_played_entering_next_szn']=0
+
+
+for row in range(1,len(all_seasons)):
+    if row%1000==0:
+        print(row)
+    if all_seasons.ix[row,'Player'] != all_seasons.ix[row-1,'Player']:
+        continue
+    elif row == len(all_seasons) - 1:
+        all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+    elif all_seasons.ix[row,'Player'] != all_seasons.ix[row+1,'Player']:
+        all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+    else:
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+
+# Fixes messed up part of loop above
+for row in range(1,len(all_seasons)):
+    if row%1000==0:
+        print(row)
+    if row == len(all_seasons) - 1:
+        all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+    elif (all_seasons.ix[row,'Player'] != all_seasons.ix[row+1,'Player']) | (all_seasons.ix[row,'season'] != all_seasons.ix[row+1,'season']):
+        all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+    else:
+        continue
+
+
+
+### Actually correct single loop combining both loops above ### --> havent tested but think is right
+
+for row in range(1,len(all_seasons)):
+    if row%1000==0:
+        print(row)
+    if all_seasons.ix[row,'Player'] != all_seasons.ix[row-1,'Player']:
+        continue
+    elif row == len(all_seasons) - 1:
+        all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+    elif (all_seasons.ix[row,'Player'] != all_seasons.ix[row+1,'Player']) | (all_seasons.ix[row,'season'] != all_seasons.ix[row+1,'season']):
+        all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+    else:
+        all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_game']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_game']+all_seasons.ix[row-1,'dk_pts']])
+
+
+#####################################################################################
+
+# Calculates career per min and per game fantasy pts
+all_seasons['career_fd_pts_per_min_entering_next_game']=all_seasons['career_fd_pts_entering_next_game']/all_seasons['career_mins_played_entering_next_game']
+all_seasons['career_dk_pts_per_min_entering_next_game']=all_seasons['career_dk_pts_entering_next_game']/all_seasons['career_mins_played_entering_next_game']
+all_seasons['career_fd_pts_per_game_entering_next_game']=all_seasons['career_fd_pts_entering_next_game']/all_seasons['career_games_played_entering_next_game']
+all_seasons['career_dk_pts_per_game_entering_next_game']=all_seasons['career_dk_pts_entering_next_game']/all_seasons['career_games_played_entering_next_game']
+
+all_seasons['career_fd_pts_per_min_entering_next_szn']=all_seasons['career_fd_pts_entering_next_szn']/all_seasons['career_mins_played_entering_next_szn']
+all_seasons['career_dk_pts_per_min_entering_next_szn']=all_seasons['career_dk_pts_entering_next_szn']/all_seasons['career_mins_played_entering_next_szn']
+all_seasons['career_fd_pts_per_game_entering_next_szn']=all_seasons['career_fd_pts_entering_next_szn']/all_seasons['career_games_played_entering_next_szn']
+all_seasons['career_dk_pts_per_game_entering_next_szn']=all_seasons['career_dk_pts_entering_next_szn']/all_seasons['career_games_played_entering_next_szn']
+
+
+
+all_seasons.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_szns_days_and_games_since_last_game_w_career_stats_entering_next_game_and_szn2_19.csv')
+
+
+
+#########################################################################################################
+
+### Can delete if needed
+
+# all_seasons.ix[row,['career_games_played_entering_next_szn','career_mins_played_entering_next_szn','career_fd_pts_entering_next_szn','career_dk_pts_entering_next_szn']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_szn']+2 , all_seasons.ix[row-1,'career_mins_played_entering_next_szn']+all_seasons.ix[row-1,'MP']+all_seasons.ix[row,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_szn']+all_seasons.ix[row-1,'fd_pts']+all_seasons.ix[row,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_szn']+all_seasons.ix[row-1,'dk_pts']+all_seasons.ix[row,'dk_pts']])
+
+        
+# all_seasons.ix[row,['career_games_played','career_mins_played']]=np.array([all_seasons.ix[row-1,'career_games_played']+1,all_seasons.ix[row-1,'career_mins_played']+all_seasons.ix[row-1,'MP']])
+
+
+# all_seasons.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([all_seasons.ix[row-1,'career_games_played_entering_next_game']+1 , all_seasons.ix[row-1,'career_mins_played_entering_next_game']+all_seasons.ix[row-1,'MP'] , all_seasons.ix[row-1,'career_fd_pts_entering_next_szn']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts_entering_next_szn']+all_seasons.ix[row-1,'dk_pts']])
+
+
+
+# start=time.time()
+# for row in range(1,len(all_seasons)):
+#     if row%1000==0:
+#         print(row)
+#     if all_seasons.ix[row,'Player'] != all_seasons.ix[row-1,'Player']:
+#         continue
+#     else:
+#         all_seasons.ix[row,['career_fd_pts','career_dk_pts']]=np.array([all_seasons.ix[row-1,'career_fd_pts']+all_seasons.ix[row-1,'fd_pts'] , all_seasons.ix[row-1,'career_dk_pts']+all_seasons.ix[row-1,'dk_pts']])
+# end=time.time()
+# print(end-start)
+
+#all_seasons.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_seasons_days_games_since_last_game_with_career_games_mins.csv')
+
+
+# Calculates correctly      
+#all_seasons.ix[row,['career_games_played','career_mins_played']]=np.array([all_seasons.ix[row-1,'career_games_played']+1,all_seasons.ix[row-1,'career_mins_played']+all_seasons.ix[row-1,'MP']])
