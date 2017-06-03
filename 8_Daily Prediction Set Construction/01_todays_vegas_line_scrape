@@ -1,0 +1,223 @@
+from urllib.request import urlopen
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+from bs4.element import NavigableString, Tag
+import datetime
+import math
+
+# Function to scrape strings from html 
+def scrape_string(restaurant_attribute):
+    targets = []
+    for target in restaurant_attribute.children:
+        if isinstance(target, NavigableString):
+            targets.append(target)
+        if isinstance(target, Tag):
+            targets.extend(scrape_string(target))
+    return targets
+
+nba_team_names = ['LOS ANGELES LAKERS', 'WASHINGTON WIZARDS', 'HOUSTON ROCKETS', 'PHILADELPHIA 76ERS', 'SAN ANTONIO SPURS', 'GOLDEN STATE WARRIORS', 'LOS ANGELES CLIPPERS', 'MILWAUKEE BUCKS', 'CHARLOTTE HORNETS', 'INDIANA PACERS', 'MIAMI HEAT', 'DENVER NUGGETS', 'CLEVELAND CAVALIERS', 'OKLAHOMA CITY THUNDER', 'PHOENIX SUNS', 'DALLAS MAVERICKS', 'BOSTON CELTICS', 'ATLANTA HAWKS', 'NEW YORK KNICKS', 'BROOKLYN NETS', 'NEW ORLEANS PELICANS','DETROIT PISTONS', 'TORONTO RAPTORS', 'ORLANDO MAGIC', 'MINNESOTA TIMBERWOLVES', 'CHICAGO BULLS', 'UTAH JAZZ', 'PORTLAND TRAILBLAZERS','SACRAMENTO KINGS','MEMPHIS GRIZZLIES']
+
+def scrape_lines(month,day):
+    
+    print(month,day)
+    
+    if (len(str(day)) > 1) & (len(str(month))==1):
+        # Access web page
+        html_content = urlopen("http://www.scoresandodds.com/grid_20170{0}{1}.html".format(month,day))
+        date = '2017-0{0}-{1}'.format(month,day)
+        
+    elif (len(str(day)) > 1) & (len(str(month))>1):
+        # Access web page
+        html_content = urlopen("http://www.scoresandodds.com/grid_2016{0}{1}.html".format(month,day))
+        date = '2016-{0}-{1}'.format(month,day)
+        
+    elif (len(str(day)) == 1) & (len(str(month))>1):
+        # Access web page
+        html_content = urlopen("http://www.scoresandodds.com/grid_2016{0}0{1}.html".format(month,day))
+        date = '2016-{0}-0{1}'.format(month,day)
+        
+    else:
+        # Access web page
+        html_content = urlopen("http://www.scoresandodds.com/grid_20170{0}0{1}.html".format(month,day))
+        date = '2017-0{0}-0{1}'.format(month,day)
+    
+    # Create html object
+    soup = BeautifulSoup(html_content, "lxml")
+    
+    # Creates list of the final line for each team, not just nba
+    final_line = soup.findAll('td', class_='currentline ')
+    
+    if scrape_string(final_line[0])==[]:
+        pass
+    
+    else:
+        
+        # Creates list of names of all teams, not just nba teams
+        teams = soup.find_all('td', class_='name')
+    
+        # Puts all nba teams into a list and saves their indices in a different list
+        team_list = []
+        team_indices = []
+        for i in range(len(teams)):
+            if scrape_string(teams[i])[0][4:].strip() in nba_team_names:
+                team_list.append(scrape_string(teams[i])[0][4:].strip())
+                team_indices.append(i)
+        
+        date_list = []
+        line_and_total_list = []
+        for i in range(len(team_indices)):
+            # Appends the line/total and strips on whitespace, 'o' and 'u' as some lines contain extra o/u data that is unwanted
+            line_and_total_list.append(scrape_string(final_line[int(team_indices[i])])[0].split()[0].split('u')[0].split('o')[0])
+            date_list.append(date)
+            
+        for i in range(len(line_and_total_list)):
+            if line_and_total_list[i]=='PK':
+                line_and_total_list[i] = '00'
+            
+        # Creats list for lines and list for totals     
+        line_list = []
+        total_list = []
+        for i in range(len(line_and_total_list)):
+            if i % 2 == 0:
+                if float(line_and_total_list[i]) < 100:
+                    total_list.append(float(line_and_total_list[i+1]))
+                    line_list.append(float(line_and_total_list[i]))
+                else:
+                    total_list.append(float(line_and_total_list[i]))
+                    line_list.append(float(str(line_and_total_list[i+1][1:])))
+            elif (float(line_and_total_list[i]) < 100):
+                total_list.append(float(line_and_total_list[i-1]))
+                line_list.append(float(line_and_total_list[i]))
+            else:
+                total_list.append(float(line_and_total_list[i]))
+                line_list.append(float(str(line_and_total_list[i-1][1:])))
+                
+        return(team_list,line_list,total_list,date_list)
+        
+# Initializes empty lists to be filled below
+all_teams = []
+all_lines = []
+all_totals = []
+all_dates = []
+
+# Last day's lines to be scraped --> 2/14
+
+#### Returns day/month #######
+
+today = pd.to_datetime('today')
+
+month = int(str(today).split('-')[1][1])
+
+day = int(str(today).split('-')[2].split()[0])
+
+### Scrapes the lines for today's games
+
+## Can break if the website is doing a "breaking line change" update (line is highlighted in a blue square)
+
+data = scrape_lines(4,11)
+
+all_teams.extend(data[0])
+all_lines.extend(data[1])
+all_totals.extend(data[2])
+all_dates.extend(data[3])
+
+##############################
+
+# Initializes new dataframe
+all_vegas_data = pd.DataFrame(columns=['Date','Team','Line','Total'],index=list(range(len(all_teams))))
+
+# Fills columns of new dataframe
+all_vegas_data.Date=np.array(all_dates)
+all_vegas_data.Team = np.array(all_teams)
+all_vegas_data.Line = np.array(all_lines)
+all_vegas_data.Total = np.array(all_totals)
+
+# Creates new team column corresponding to first three letters of initial team column
+all_vegas_data['team_formatted'] = all_vegas_data.Team.str[:3]
+
+# Properly formats team names for merge
+for row in range(len(all_vegas_data)):
+    if all_vegas_data.ix[row,'team_formatted']=='GOL':
+        all_vegas_data.ix[row,'team_formatted']='GSW'
+    if all_vegas_data.ix[row,'team_formatted']=='OKL':
+        all_vegas_data.ix[row,'team_formatted']='OKC'
+    if all_vegas_data.ix[row,'team_formatted']=='SAN':
+        all_vegas_data.ix[row,'team_formatted']='SAS'
+    if all_vegas_data.ix[row,'team_formatted']=='BRO':
+        all_vegas_data.ix[row,'team_formatted']='BRK'
+    if all_vegas_data.ix[row,'team_formatted']=='CHA':
+        all_vegas_data.ix[row,'team_formatted']='CHO'
+    if all_vegas_data.ix[row,'Team']=='LOS ANGELES LAKERS':
+        all_vegas_data.ix[row,'team_formatted']='LAL'
+    if all_vegas_data.ix[row,'Team']=='LOS ANGELES CLIPPERS':
+        all_vegas_data.ix[row,'team_formatted']='LAC'
+    if all_vegas_data.ix[row,'Team']=='NEW YORK KNICKS':
+        all_vegas_data.ix[row,'team_formatted']='NYK'
+    if all_vegas_data.ix[row,'Team']=='NEW ORLEANS PELICANS':
+        all_vegas_data.ix[row,'team_formatted']='NOP'
+
+# Creates home/away column and opponent column to be used for merge with opponent defense stats
+for row in range(len(all_vegas_data)):
+    if row % 2 == 0:
+        all_vegas_data.ix[row,'location_@']=1
+        all_vegas_data.ix[row,'Opponent']=all_vegas_data.ix[row+1,'Team'].lower().title()
+    else:
+        all_vegas_data.ix[row,'location_@']=0
+        all_vegas_data.ix[row,'Opponent']=all_vegas_data.ix[row-1,'Team'].lower().title()
+    
+###############################################################################################################################
+
+all_vegas = all_vegas_data.copy()
+del all_vegas_data
+
+all_vegas['Close Line'] = all_vegas['Line']
+all_vegas['Close Total'] = all_vegas['Total']
+all_vegas.drop(['Line','Total','Date'],axis=1,inplace=True)
+
+#######################################################################
+### Creates categorical variables for vegas lines ###
+
+# Creates 'avg_line' to be used for creation of categorical variables --> use average b/c it will be nearly impossible to have final vegas line in model, use average to get line in between initial and final line, most representative of what will be supplied to model
+all_vegas['avg_line'] = all_vegas['Close Line']
+
+# Close Game
+all_vegas['close_game'] = np.array([1 if math.fabs(all_vegas.ix[row,'avg_line']) <= 3 else 0 for row in range(len(all_vegas))])
+
+# Small Win
+all_vegas['small_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -3) & (all_vegas.ix[row,'avg_line'] >= -6.5) else 0 for row in range(len(all_vegas))])
+
+# Medium Win
+all_vegas['medium_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -6.5) & (all_vegas.ix[row,'avg_line'] >= -11) else 0 for row in range(len(all_vegas))])
+
+# Big Win
+all_vegas['big_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -11) else 0 for row in range(len(all_vegas))])
+
+# Small Loss
+all_vegas['small_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 3) & (all_vegas.ix[row,'avg_line'] < 6.5) else 0 for row in range(len(all_vegas))])
+
+# Medium Win
+all_vegas['medium_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 6.5) & (all_vegas.ix[row,'avg_line'] <= 11) else 0 for row in range(len(all_vegas))])
+
+# Big Win
+all_vegas['big_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 11) else 0 for row in range(len(all_vegas))])
+
+# Writes todays lines to csv to be merged with fully manicured final prediction set
+all_vegas.to_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/2016-2017 Vegas Lines/todays_vegas_lines_4_11.csv")
+
+########################################################################
+
+# final_pred_set = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/8.Daily Prediction Set Construction/pred_set_4_8_ready_for_vegas_merge.csv")
+
+# # Merges final_pred_set with vegas data and only keeps players who have a match in the vegas data
+# final_pred_set_vegas_location = pd.merge(final_pred_set,all_vegas, left_on='Tm',right_on='team_formatted', how='right')
+
+# final_pred_set_vegas_location.to_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/final_pred_set_4_8.csv")
+
+
+
+
+
+
+
+

@@ -1,0 +1,539 @@
+from urllib.request import urlopen
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import numpy as np
+import time
+import datetime
+import math
+
+### Scrapes new game data
+
+# 2/14 --> last i = 17400
+# 2/16 --> last i = 17700
+# 2/18 --> last i = 18100
+# 4/8 --> last i = 25100
+
+j = 1
+i = 18100
+while j > 0:
+    
+    # Accesses web page
+    html_content = urlopen("http://www.basketball-reference.com/play-index/pgl_finder.cgi?request=1&player_id=&match=game&year_min=2017&year_max=2017&age_min=0&age_max=99&team_id=&opp_id=&is_playoffs=N&round_id=&game_num_type=&game_num_min=&game_num_max=&game_month=&game_day=&game_location=&game_result=&is_starter=&is_active=&is_hof=&pos_is_g=Y&pos_is_gf=Y&pos_is_f=Y&pos_is_fg=Y&pos_is_fc=Y&pos_is_c=Y&pos_is_cf=Y&c1stat=&c1comp=&c1val=&c2stat=&c2comp=&c2val=&c3stat=&c3comp=&c3val=&c4stat=&c4comp=&c4val=&is_dbl_dbl=&is_trp_dbl=&order_by=date_game&order_by_asc=Y&offset={}".format(i))
+
+    # Create html object
+    soup = BeautifulSoup(html_content, "lxml")
+
+    # Breaks loop upon reaching blank table
+    if len(soup.find_all("table")) == 0:
+        print("Done")
+        break
+    
+    # Returns the first table in html_content
+    table = soup.find_all("table")[0]
+
+    if j == 1:
+        
+        # Accessing the row of the html object that contains the column heading names
+        column_heading_row = soup.find_all("tr")[0]
+
+        # Returns the tags (?)
+        th_tags = column_heading_row.find_all("th")
+
+        # Creates a list containing the column names
+        col_names=[]
+        for th in th_tags:
+            col_names.append(th.get_text())
+    
+        col_names_minus_rank = col_names[1:]
+    
+        # Adds names for missing column names
+        col_names_minus_rank[5]="Location"
+        col_names_minus_rank[7]="Result"
+        
+        # Returns the 2nd (could be any) row in the table
+        any_row = table.find_all("tr")[3]
+    
+        # Returns number of columns in table
+        num_of_columns = len(any_row.find_all('td'))
+    
+        # Initializes new dataframe
+        new_df = pd.DataFrame(columns=range(num_of_columns), index=[0])
+        
+        # Used to iterate through html table in loop below
+        row_marker = 0
+    
+    # Parses through table and puts stats into dataframe going across each row
+    for row in table.find_all('tr'):
+        column_marker = 0
+        columns = row.find_all('td')
+        for column in columns:
+            new_df.ix[row_marker,column_marker] = column.get_text()
+            column_marker += 1
+            if column_marker == num_of_columns:
+                row_marker += 1
+    
+    # Increments i which increments the page number (100 = 2nd page)
+    print(i)
+    i += 100
+    j += 1
+
+print('Done') 
+  
+# Changes columns names
+new_df.columns = col_names_minus_rank
+
+###################################################################################
+
+### Reads in most recently scraped gamelog data ###
+most_recent_gamelog_data = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2016-2017_nba_player_gamelog_most_recent_update.csv")
+most_recent_gamelog_data.drop('Unnamed: 0', axis=1, inplace=True)
+
+# Appends new game data to most recent gamelog scrape
+gamelog_2016 = most_recent_gamelog_data.append(new_df)
+
+# Drops duplicate rows
+gamelog_2016.drop_duplicates(subset=['Player','Date','Age'], inplace=True)
+
+gamelog_2016.reset_index(inplace=True)  
+
+gamelog_2016.drop('index', axis=1, inplace=True)
+
+# Sorts dataframe first by player then by date
+gamelog_2016.sort_values(['Player','Date'],axis=0,inplace=True)
+
+# Resets index to allow for looping through the rows
+gamelog_2016.reset_index(inplace=True)
+
+############################################################################################
+# Changes all values of MP from 0 to 0.9 to avoid getting inf values in wtd avg calculation for fd pts per min
+gamelog_2016.ix[gamelog_2016.MP == 0,'MP'] = 0.9
+
+### Write to csv to save
+
+gamelog_2016.to_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2016-2017_nba_player_gamelog_most_recent_update.csv")
+
+# gamelog_2016.to_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2016-2017_gamelog_entering_4_16.csv")
+
+
+# # Strip out games past 4_7
+# gamelog_2016_4_7 = gamelog_2016.ix[only_games_4_7_or_before]
+
+print('Worked')
+
+gamelog_2016 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Gamelogs/gamelog_entering_4_11.csv")
+
+###############################################################################################################
+
+# Loop to create game number column
+for team in gamelog_2016.Tm.unique():
+    team_mask = gamelog_2016.Tm==team
+    dates = gamelog_2016.ix[team_mask,'Date'].unique()
+    dates.sort()
+    for game_number in range(len(dates)):
+        date_mask = gamelog_2016.Date==dates[game_number]
+        gamelog_2016.ix[(date_mask) & (team_mask),"Game_Number"]=game_number+1
+
+######################################################################################
+
+### For each of the two stats below, the values will be incorrect save for the very last value, which will be correct and be in relation to the next game they will play
+### Values for days/games since last game will be in relation to today (?)
+###     When flipping to wide format, the only value of concern will be the very last value for each player, which will correspond to the number of days and team games between the game that is about to be played and the last game they played
+
+### May not need this stuff if loop above works --> think it does
+today = pd.to_datetime('today')
+today_vector = np.array([today for i in range(len(gamelog_2016))])
+
+# Calculates most recent game number and team games missed since last game    
+teams_list = gamelog_2016.Tm.unique()
+for i in range(len(teams_list)):
+    gamelog_2016.ix[gamelog_2016.Tm==teams_list[i],'most_recent_game']=np.max(gamelog_2016.ix[gamelog_2016.Tm==teams_list[i],'Game_Number'])
+ 
+gamelog_2016['team_games_missed_since_last_game'] = 0
+gamelog_2016['days_since_last_game'] = 0
+for row in range(len(gamelog_2016)):
+    if (row == 0):
+        gamelog_2016.ix[row,'team_games_missed_since_last_game']=gamelog_2016.ix[row,'Game_Number']-1
+        gamelog_2016.ix[row,'days_since_last_game'] = 100
+    elif (gamelog_2016.ix[row,'Player']!=gamelog_2016.ix[row-1,'Player']):
+        gamelog_2016.ix[row,'team_games_missed_since_last_game']=gamelog_2016.ix[row,'Game_Number']-1
+        gamelog_2016.ix[row,'days_since_last_game'] = 100
+    elif (row == len(gamelog_2016)-1):
+        gamelog_2016.ix[row,'team_games_missed_since_last_game']=gamelog_2016.ix[row,'most_recent_game']-gamelog_2016.ix[row,'Game_Number']
+        gamelog_2016.ix[row,'days_since_last_game'] = int(str(today - pd.to_datetime([gamelog_2016.ix[row,'Date']])).split("'")[1].split()[0])
+    elif (gamelog_2016.ix[row,'Player']!=gamelog_2016.ix[row+1,'Player']):
+        gamelog_2016.ix[row,'team_games_missed_since_last_game']=gamelog_2016.ix[row,'most_recent_game']-gamelog_2016.ix[row,'Game_Number']
+        gamelog_2016.ix[row,'days_since_last_game'] = int(str(today - pd.to_datetime([gamelog_2016.ix[row,'Date']])).split("'")[1].split()[0])
+    else:
+        gamelog_2016.ix[row,'team_games_missed_since_last_game']=gamelog_2016.ix[row,'Game_Number']-gamelog_2016.ix[row-1,'Game_Number']
+        gamelog_2016.ix[row,'days_since_last_game'] = int(str(pd.to_datetime(gamelog_2016.ix[row,'Date']) - pd.to_datetime(gamelog_2016.ix[row-1,'Date'])).split()[0])
+
+#######################################################################################
+
+##### Converts days_since_last_game into a categorical variable  ######
+
+# Back to back
+gamelog_2016['back_to_back'] = np.array([1 if gamelog_2016.ix[row,'days_since_last_game'] == 1 else 0 for row in range(len(gamelog_2016))])
+
+# One day off
+gamelog_2016['one_day_off'] = np.array([1 if gamelog_2016.ix[row,'days_since_last_game'] == 2 else 0 for row in range(len(gamelog_2016))])
+
+# Two day off
+gamelog_2016['two_days_off'] = np.array([1 if gamelog_2016.ix[row,'days_since_last_game'] == 3 else 0 for row in range(len(gamelog_2016))])
+
+# Three/four days off
+gamelog_2016['three-four_days_off'] = np.array([1 if (gamelog_2016.ix[row,'days_since_last_game'] == 4) | (gamelog_2016.ix[row,'days_since_last_game'] == 5) else 0 for row in range(len(gamelog_2016))])
+
+# Five-seven days off
+gamelog_2016['five-seven_days_off'] = np.array([1 if (gamelog_2016.ix[row,'days_since_last_game'] == 6) | (gamelog_2016.ix[row,'days_since_last_game'] == 7) | (gamelog_2016.ix[row,'days_since_last_game'] == 8) else 0 for row in range(len(gamelog_2016))])
+
+# eight_plus_days_off
+gamelog_2016['eight_days_plus_off'] = np.array([1 if (gamelog_2016.ix[row,'days_since_last_game'] > 8) & (gamelog_2016.ix[row,'days_since_last_game'] != 100) else 0 for row in range(len(gamelog_2016))])
+
+# Creates one-hot variable for first game of the season
+gamelog_2016['first_game_of_season'] = np.array([1 if gamelog_2016.ix[row,'days_since_last_game'] == 100 else 0 for row in range(len(gamelog_2016))])
+
+
+##### Converts team_games_missed_since_last_game into a categorical variable #####
+
+# Missed no games
+gamelog_2016['missed_no_games'] = np.array([1 if gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 0 else 0 for row in range(len(gamelog_2016))])
+
+# Missed one game
+gamelog_2016['missed_one_game'] = np.array([1 if gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 1 else 0 for row in range(len(gamelog_2016))])
+
+# Missed two games
+gamelog_2016['missed_two_games'] = np.array([1 if gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 2 else 0 for row in range(len(gamelog_2016))])
+
+# Missed 3-4 games
+gamelog_2016['missed_three-four_games'] = np.array([1 if (gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 3) | (gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 4) else 0 for row in range(len(gamelog_2016))])
+
+# Missed 5-7 games
+gamelog_2016['missed_five-seven_games'] = np.array([1 if (gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 5) | (gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 6) | (gamelog_2016.ix[row,'team_games_missed_since_last_game'] == 7) else 0 for row in range(len(gamelog_2016))])
+
+# Missed 8+ games
+gamelog_2016['missed_eight_plus_games'] = np.array([1 if (gamelog_2016.ix[row,'team_games_missed_since_last_game'] > 7) else 0 for row in range(len(gamelog_2016))])
+
+################################################################################################################
+
+### Calculates whether a double double and/or triple double occurred for each game  ###
+
+gamelog_2016['double_double'] = np.where(np.sum(gamelog_2016.ix[:,["PTS","TRB",'AST',"STL",'BLK',]] >= 10, axis=1) == 2, 1, 0)
+
+gamelog_2016['triple_double'] = np.where(np.sum(gamelog_2016.ix[:,["PTS","TRB",'AST',"STL",'BLK',]] >= 10, axis=1) >= 3, 1, 0)
+
+### Calculates fd and dk pts for each game and per minute ###
+
+gamelog_2016['fd_pts']=np.array(gamelog_2016['PTS'] + 2*gamelog_2016['BLK'] + 1.2*gamelog_2016['TRB'] + 2*gamelog_2016['STL'] + 1.5*gamelog_2016['AST'] - gamelog_2016['TOV'])
+
+gamelog_2016['dk_pts']=np.array(gamelog_2016['PTS'] + 2*gamelog_2016['BLK'] + 1.25*gamelog_2016['TRB'] + 2*gamelog_2016['STL'] + 1.5*gamelog_2016['AST'] - 0.5*gamelog_2016['TOV'] + 0.5*gamelog_2016['3P'] + 1.5*gamelog_2016['double_double'] + 3*gamelog_2016['triple_double'])
+
+gamelog_2016['fd_pts_per_min']=gamelog_2016['fd_pts']/gamelog_2016['MP']
+
+gamelog_2016['dk_pts_per_min']=gamelog_2016['dk_pts']/gamelog_2016['MP']
+
+# Converts 'Location' into a one-hot variable
+gamelog_2016 = pd.get_dummies(gamelog_2016,columns=['Location'])
+
+############################################################################################
+# Calculates the number of games played by each team and creates a dictionary with team names as keys and 0-29 values
+#   Create dictionary to allow for retaining of team info through flip to wide format because it won't allow non-numeric data
+#   Might be able to remove team related ish, dont really need
+
+teams_list = gamelog_2016.Tm.unique()
+team_dict = {}
+reverse_team_dict = {}
+for i in range(len(teams_list)):
+    gamelog_2016.ix[gamelog_2016.Tm==teams_list[i],'most_recent_game']=np.max(gamelog_2016.ix[gamelog_2016.Tm==teams_list[i],'Game_Number'])
+    gamelog_2016.ix[gamelog_2016.Tm==teams_list[i],'team_dict_value'] = i
+    team_dict[teams_list[i]] = i
+    reverse_team_dict[i] = teams_list[i]
+    
+# Adds to the game number for players who were traded to teams who have played fewer games than the team they were on previously
+    # Have not figured out what to do when players are traded to teams who have played more games
+        #How to tell that player didn't miss games just changed teams? maybe logic in line below
+        #if (gamelog_2016.ix[row,'Player'] == gamelog_2016.ix[row-1,'Player']) & (gamelog_2016.ix[row,'Game_Number'] > gamelog_2016.ix[row-1,'Game_Number']+1) & (gamelog_2016.ix[row,'team_dict_value'] != gamelog_2016.ix[row-1,'team_dict_value']):
+   
+for row in range(1,len(gamelog_2016)):
+    if (gamelog_2016.ix[row,'Player'] == gamelog_2016.ix[row-1,'Player']) & (gamelog_2016.ix[row,'Game_Number'] == gamelog_2016.ix[row-1,'Game_Number']):
+        gamelog_2016.ix[row,'Game_Number'] = gamelog_2016.ix[row-1,'Game_Number'] + 1
+    if (gamelog_2016.ix[row,'Player'] == gamelog_2016.ix[row-1,'Player']) & (gamelog_2016.ix[row,'Game_Number'] == gamelog_2016.ix[row-1,'Game_Number'] - 1):
+        gamelog_2016.ix[row,'Game_Number'] = gamelog_2016.ix[row-1,'Game_Number'] + 2
+    
+############################################################################################
+
+# Creates dataframe with each row corresponding to a season for each player/season combo
+each_row_player=pd.pivot_table(gamelog_2016, index=["Player"], columns=["Game_Number"], values=['team_dict_value','PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GmSc','MP','ORB','PF','STL','TOV',"TRB",'GS','days_since_last_game','team_games_missed_since_last_game', 'double_double', 'triple_double', 'fd_pts', 'dk_pts', 'fd_pts_per_min', 'dk_pts_per_min', 'back_to_back','one_day_off', 'two_days_off', 'three-four_days_off','five-seven_days_off', 'eight_days_plus_off','first_game_of_season', 'missed_no_games','missed_one_game', 'missed_two_games', 'missed_three-four_games','missed_five-seven_games', 'missed_eight_plus_games','Location_@','most_recent_game'])
+
+# del gamelog_2016 #???
+
+# Captializes PTS in columns so they pass through filter properly to be deleted
+pts_dict={'fd_pts':'FD_POINTS' ,'dk_pts':'DK_POINTS', 'fd_pts_per_min':'FD_POINTS_per_minute', 'dk_pts_per_min':'DK_POINTS_per_minute'}
+
+# Changes column names
+each_row_player.rename(columns=pts_dict, inplace=True)
+
+# Creates new df with correct columns
+each_row_player.reset_index(inplace=True)
+
+each_row_player_cols = each_row_player.columns.get_values()
+
+### Creates new team columm ###
+
+team_cols = [col_num for col_num in range(len(each_row_player_cols)) if 'team_dict_value' in each_row_player_cols[col_num]]
+
+# Creates a list containing the right-most value in the team cols for each player
+team_numbers = np.fliplr(each_row_player.ix[:,team_cols])[list(range(len(each_row_player))),np.argmax(np.where(np.fliplr(each_row_player.ix[:,team_cols])>-1,1,0),axis=1)].tolist()
+
+# Creates 'Tm' column corresponding to the value in the reverse_team_dict for the team_number as key
+each_row_player['Tm'] = np.array([reverse_team_dict[team_number] for team_number in team_numbers])
+
+######################################################################################################
+
+### Rodeo works before this point
+
+### Creates new most recent game cols ###
+most_recent_game_cols = [col_num for col_num in range(len(each_row_player_cols)) if 'most_recent_game' in each_row_player_cols[col_num]]
+
+each_row_player['most_recent_game_number'] = np.max(each_row_player.ix[:,most_recent_game_cols],axis=1)
+
+each_row_player.drop(each_row_player_cols[most_recent_game_cols], inplace=True, axis=1)
+
+####################################################################################################
+
+### Calculates weighted averages of 'stats' and total, medians and flat averages
+
+# Done to be able to reuse weighted average code
+df = each_row_player.copy()
+
+df['season'] = 2016
+
+next_game_in_2016 = np.max(gamelog_2016.most_recent_game)+1
+
+del each_row_player
+del gamelog_2016
+
+start_of_stat=1
+
+stats = ['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GS', 'GmSc','MP','ORB','PF','STL','TOV',"TRB",'FD_POINTS','DK_POINTS','FD_POINTS_per_minute','DK_POINTS_per_minute']
+
+years = [2016]
+
+weights = [0.2,0.3,0.5,0.8,1.2,1.7]
+
+start = time.time()
+######################
+for weight in weights:
+
+    for year in years:
+        
+        print(year,weight)
+    
+        # Calculates the number of games in a season
+        num_of_games_in_season = int(next_game_in_2016-1)
+        
+        # Creates increment value for weight vector
+        increment = weight / (num_of_games_in_season-1)
+                
+        # Creates weight vector
+        weight_vector = np.array([(1-weight/2+(increment*game)) for game in range(num_of_games_in_season)])
+        
+        # Using first stat [PTS usually] columns to determine which games each player played in, could be any stat in theory
+        start_of_first_stat = np.argmax(df.columns.get_level_values(0).str.contains(stats[0],regex=False) > 0)
+        
+        # Calculates last column ("end_of_year") containing data for stat/year combo in question
+        end_of_first_stat = start_of_first_stat + num_of_games_in_season
+        
+        # Vectorized calculation for weight_resdistribution (missing_weight / present_weight)
+        weight_resdistribution=np.array(np.where(df.ix[df.season == year,start_of_first_stat:end_of_first_stat].isnull().sum(axis=1) == num_of_games_in_season , 0, np.sum((pd.isnull(df.ix[df.season == year,start_of_first_stat:end_of_first_stat]) * weight_vector),axis=1)/np.sum((~pd.isnull(df.ix[df.season == year,start_of_first_stat:end_of_first_stat]) * weight_vector),axis=1)))
+        
+        for stat in stats:
+              
+            start_of_stat = np.argmax(df.columns.get_level_values(0).str.contains(stat,regex=False) > 0)
+        
+            # Calculates last column ("end_of_stat") containing data for stat/year combo in question
+            end_of_stat = start_of_stat + num_of_games_in_season
+            
+            # Creates list of columns that contain the string 
+            stat_cols = [column for column in df.columns if stat in str(column)]
+            
+            if weight == weights[0]:
+                
+                # Calculates avg, total and median stats for the szn up to the upcoming game
+                df.ix[df.season == year, 'full_szn_avg_{}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].mean(axis=1))
+                df.ix[df.season == year,'full_szn_median_{}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].median(axis=1))
+                df.ix[df.season == year, 'full_szn_total_{0}'.format(stat.lower())] = np.array(df.ix[df.season == year,start_of_stat:end_of_stat].sum(axis=1))
+                       
+            ### Converts NaN values to 0 then multiplies the row values by the newly calculated weight vector 
+            df.ix[df.season==year,'wtd_avg_{0}_{1}'.format(weight,stat.lower())] = np.array(np.sum((((~(df.ix[df.season == year,start_of_stat:end_of_stat].isnull()) * weight_vector)).multiply(weight_resdistribution,axis='index') + (~(df.ix[df.season == year,start_of_stat:end_of_stat].isnull()) * weight_vector)) * df.ix[df.season == year,start_of_stat:end_of_stat],axis=1)/num_of_games_in_season)
+
+end = time.time()
+print(end - start)
+
+############################################################################################
+###########################################################################################################################################
+
+# Calculates avg, total and median for each stat over each 'stretch' in game_stretches
+
+game_stretches = [1,2,3,4,5,6,7,8,9,10,12,15,17,21,25,30,35,40,45,50,55,60]
+
+season_lengths = df.most_recent_game_number.unique()
+
+# Sorts column levels (stats in this case) to avoid a lexsort depth error
+df.sortlevel(0, axis=1, inplace=True)
+
+start = time.time()
+for stat in stats:
+    
+    for length in season_lengths:
+        
+        start_of_stat = np.argmax(df.columns.get_level_values(0).str.contains(stat,regex=False) > 0)
+        
+        # Calculates last column ("end_of_stat") containing data for stat/year combo in question
+        end_of_stat = start_of_stat + length
+        
+        for stretch in game_stretches:
+            
+            # Calculates avg, total and median stats for the szn up to the upcoming game
+            # Have to mask by length to calculate last x games for different season lengths to avoid penalizing teams who have played fewer games than the max games played
+                # If this isn't done, teams that haven't played the max number of games will have empty cells in the range used for total, unintentionally penalizing them
+            df.ix[df.most_recent_game_number == length, 'last{0}_avg_{1}'.format(stretch,stat.lower())] = np.array(df.ix[df.most_recent_game_number == length, int(end_of_stat-stretch):int(end_of_stat)].mean(axis=1))
+            df.ix[df.most_recent_game_number == length, 'last{0}_median_{1}'.format(stretch,stat.lower())] = np.array(df.ix[df.most_recent_game_number == length, int(end_of_stat-stretch):int(end_of_stat)].median(axis=1))
+            df.ix[df.most_recent_game_number == length, 'last{0}_total_{1}'.format(stretch,stat.lower())] = np.array(df.ix[df.most_recent_game_number == length, int(end_of_stat-stretch):int(end_of_stat)].sum(axis=1))
+
+end = time.time()
+print(end - start)
+############################################################################################
+############################################################################################
+
+### Drop all gamelog data except for the upcoming game number
+
+# Removes multi-indexing from column names and creates list of column names 
+seasons_as_rows = pd.DataFrame(df.to_records())
+
+# Drops 'index' column
+seasons_as_rows.drop('index',axis=1,inplace=True)
+
+cols = seasons_as_rows.columns.tolist()
+
+#seasons_as_rows.fillna(value=0, inplace=True)
+
+##################################################################################################
+
+### Relevant code
+
+# Returns array of flipped columns
+#np.fliplr(seasons_as_rows.ix[:,seasons_as_rows.columns.str.contains('days_since_last_game')])
+
+# Returns index of first nonzero value in reversed column order 
+#np.argmax(np.where(np.fliplr(seasons_as_rows.ix[:,seasons_as_rows.columns.str.contains('days_since_last_game')])>0,1,0),axis=1)
+
+# Returns array containing value located in array of flipped column at index of first non zero value
+#np.fliplr(seasons_as_rows.ix[:,seasons_as_rows.columns.str.contains('days_since_last_game')])[list(range(len(seasons_as_rows))),np.argmax(np.where(np.fliplr(seasons_as_rows.ix[:,seasons_as_rows.columns.str.contains('days_since_last_game')])>0,1,0),axis=1)]
+
+###################################################################################################
+
+# Calculating the most recent value of all of the beauts aka the value of these stats with respect to the upcoming game
+
+# Need to figure out how to bring the vegas data in 
+
+beauts = ['days_since_last_game','team_games_missed_since_last_game', 'back_to_back','one_day_off', 'two_days_off', 'three-four_days_off','five-seven_days_off', 'eight_days_plus_off','first_game_of_season', 'missed_no_games','missed_one_game', 'missed_two_games', 'missed_three-four_games','missed_five-seven_games', 'missed_eight_plus_games','Location_@']
+
+# Need to figure out how to grab not just the max value but the most recent value, might be fixed from loop added in step 2
+for beaut in beauts:
+    seasons_as_rows[beaut.lower()]=np.fliplr(seasons_as_rows.ix[:,seasons_as_rows.columns.str.contains(beaut)])[list(range(len(seasons_as_rows))),np.argmax(np.where(np.fliplr(~seasons_as_rows.ix[:,seasons_as_rows.columns.str.contains(beaut)].isnull()),1,0),axis=1)]
+    
+####################################################################################################
+
+stats_with_game_nums_to_remove = ['PTS','2P','2P%','2PA', '3P', '3P%', '3PA', 'AST','BLK', 'DRB','FG', 'FG%', 'FGA', 'FT', 'FT%', 'FTA', 'GS','GmSc','MP','ORB','PF','STL','TOV',"TRB",'Location_@','POINTS']
+
+# Creates list of lower case stats to use to find columns that don't have associated game numbers in column headings
+stats_lower = [stat.lower() for stat in stats_with_game_nums_to_remove]
+
+### Createst list of column names containing gamelog data from game 1 through game before upcoming game
+cols_to_remove = []
+# Pass np.argmax function to skip over season and player column names
+for i in range(len(cols)):
+    # Checks if any stat in the list of stats is contained in the given column name
+    if (not 'Player' in cols[i]) & (not 'Tm' in cols[i]) & ((not any(stat in cols[i] for stat in stats_lower)) | ('days' in cols[i]) | ('team_games_missed' in cols[i]) | ("DraftKings_PTS" in cols[i])):
+        cols_to_remove.append(cols[i])
+
+# Drops gamelog columns
+seasons_as_rows = seasons_as_rows.drop(cols_to_remove, axis=1)
+
+cols_list = seasons_as_rows.columns.tolist()
+
+# Removes extra spaces, commas and quotation marks from non-next game columns that were added from removing multi-indexing in cols_list
+for i in range(len(cols_list)):
+    if ((i == 0) | (i == 1 )) | ((any(stat in cols_list[i] for stat in stats_lower))  &  ('career' not in cols_list[i])) &  ('last_game' not in cols_list[i]):
+        #print(cols_list[i].partition("(")[-1].rpartition(",")[0].strip("'"))
+        cols_list[i]=cols_list[i].partition("(")[-1].rpartition(",")[0].strip("'")
+        
+# Creates dictionary that can be used to rename column names in seasons_as_rows
+rename_columns_dict = {old:new for (old,new) in zip(seasons_as_rows.columns,cols_list)}      
+
+# Renames columns to remove extra spaces, commas and quotation marks from non-next game columns
+seasons_as_rows.rename(columns=rename_columns_dict, inplace=True)
+
+# Fills remaining NA cells with 0 --> do after weighted average to avoid having to re-write weighted average code
+seasons_as_rows = seasons_as_rows.fillna(value=0)
+
+# Read in career, adp, draft, and ht/wt dataset
+career_stats = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/Career Stats Data Set/career_stats_database_with_adp_draft_size.csv')
+unnamed_cols = [col for col in career_stats.columns if 'Unnamed:' in col]
+career_stats.drop('Unnamed: 0', axis=1, inplace=True)
+
+# Only keeps the last season for each player to avoid duplicates upon merging
+most_recent_season_career_stats = career_stats.drop_duplicates(subset = 'Player', keep = 'last')
+
+final_pred_set = pd.merge(seasons_as_rows,most_recent_season_career_stats, on='Player', how='left')
+
+# Converts 'Pos' into a one-hot variable
+final_pred_set = pd.get_dummies(final_pred_set, columns=['Pos'])
+
+final_pred_set['season'] = 2016
+
+# Creates one hot for whether or not there was adp present
+final_pred_set['adp_data_present']=np.where(final_pred_set.ix[:,'season'].astype(int) < 2010, 0, 1)
+
+# Create career columns
+final_pred_set['career_fd_pts_entering_next_game'] = final_pred_set['career_fd_pts_entering_next_szn'] + final_pred_set['full_szn_total_fd_points']
+final_pred_set['career_dk_pts_entering_next_game'] = final_pred_set['career_dk_pts_entering_next_szn'] + final_pred_set['full_szn_total_dk_points']
+final_pred_set['career_fd_pts_per_game_entering_next_game'] = final_pred_set['career_fd_pts_per_game_entering_next_szn'] + final_pred_set['full_szn_avg_fd_points']
+final_pred_set['career_dk_pts_per_game_entering_next_game'] = final_pred_set['career_dk_pts_per_game_entering_next_szn'] + final_pred_set['full_szn_avg_dk_points']
+final_pred_set['career_mins_played_entering_next_game'] = final_pred_set['career_mins_played_entering_next_szn'] + final_pred_set['full_szn_total_mp']
+final_pred_set['career_games_played_entering_next_game'] = final_pred_set['career_games_played_entering_next_szn'] + np.array(final_pred_set['full_szn_total_mp']/final_pred_set['full_szn_avg_mp'])
+final_pred_set['career_fd_pts_per_min_entering_next_game'] = final_pred_set['career_fd_pts_entering_next_game']/final_pred_set['career_mins_played_entering_next_game']
+final_pred_set['career_dk_pts_per_min_entering_next_game'] = final_pred_set['career_dk_pts_entering_next_game']/final_pred_set['career_mins_played_entering_next_game']
+
+#########################################################################################################
+
+# Reading in prior data sets
+
+first_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_first_year_priors.csv")
+first_year_priors = first_year_priors.ix[:,['Player','first_year_season' , "xgb_pred_first_year_('reg_szn_total_fd_pts', '')" , "rf_pred_first_year_('reg_szn_total_fd_pts', '')" , "avg_pred_first_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_first_year_('reg_szn_total_dk_pts', '')" , "rf_pred_first_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_first_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_first_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_first_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_first_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_first_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_first_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_first_year_('DK_prior_^0.7_of_total', '')"]]
+first_year_priors.rename(columns={'first_year_season':'season' , "xgb_pred_first_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_first_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_first_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_first_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_first_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_first_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_first_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_first_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_first_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_first_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_first_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_first_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+second_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_second_year_priors.csv")
+second_year_priors = second_year_priors.ix[:,['Player','second_year_season' , "xgb_pred_second_year_('reg_szn_total_fd_pts', '')" , "rf_pred_second_year_('reg_szn_total_fd_pts', '')" , "avg_pred_second_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_second_year_('reg_szn_total_dk_pts', '')" , "rf_pred_second_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_second_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_second_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_second_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_second_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_second_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_second_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_second_year_('DK_prior_^0.7_of_total', '')"]]
+second_year_priors.rename(columns={'second_year_season':'season' , "xgb_pred_second_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_second_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_second_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_second_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_second_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_second_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_second_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_second_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_second_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_second_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_second_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_second_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+third_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_third_year_priors.csv")
+third_year_priors = third_year_priors.ix[:,['Player','third_year_season' , "xgb_pred_third_year_('reg_szn_total_fd_pts', '')" , "rf_pred_third_year_('reg_szn_total_fd_pts', '')" , "avg_pred_third_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_third_year_('reg_szn_total_dk_pts', '')" , "rf_pred_third_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_third_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_third_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_third_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_third_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_third_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_third_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_third_year_('DK_prior_^0.7_of_total', '')"]]
+third_year_priors.rename(columns={'third_year_season':'season' , "xgb_pred_third_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_third_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_third_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_third_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_third_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_third_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_third_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_third_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_third_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_third_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_third_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_third_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+fourth_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fourth_year_priors.csv")
+fourth_year_priors = fourth_year_priors.ix[:,['Player','fourth_year_season' , "xgb_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_fourth_year_('reg_szn_total_dk_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_fourth_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_fourth_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('DK_prior_^0.7_of_total', '')"]]
+fourth_year_priors.rename(columns={'fourth_year_season':'season' , "xgb_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+fifth_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fifth_year_priors.csv")
+fifth_year_priors = fifth_year_priors.ix[:,['Player','fifth_year_season' , "xgb_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_fifth_year_('reg_szn_total_dk_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_fifth_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_fifth_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('DK_prior_^0.7_of_total', '')"]]
+fifth_year_priors.rename(columns={'fifth_year_season':'season' , "xgb_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+all_priors=first_year_priors.append(second_year_priors).append(third_year_priors).append(fourth_year_priors).append(fifth_year_priors)
+
+final_pred_set = pd.merge(final_pred_set, all_priors, on=['Player','season'], how = 'left')
+
+final_pred_set.to_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/pred_set_4_11_ready_for_vegas_merge.csv")
+
+

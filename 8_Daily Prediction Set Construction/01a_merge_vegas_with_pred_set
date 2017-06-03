@@ -1,0 +1,13 @@
+import pandas as pd
+import numpy as np
+
+pred_set_4_8 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/pred_set_4_8_ready_for_vegas_merge.csv")
+
+vegas_4_8 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/2016-2017 Vegas Lines/todays_vegas_lines_4_8.csv")
+
+# Merges final_pred_set with vegas data and only keeps players who have a match in the vegas data
+final_pred_set_vegas_location = pd.merge(pred_set_4_8,vegas_4_8, left_on='Tm',right_on='team_formatted', how='right')
+
+final_pred_set_vegas_location.to_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/final_pred_set_4_8.csv")
+
+

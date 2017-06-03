@@ -1,0 +1,140 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+import re
+import math
+
+# Read in prediction set
+pred_set_no_career = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/2_daily_prediction_set_no_adp_draft_3_10.csv')
+unnamed_cols = [col for col in pred_set_no_career.columns if 'Unnamed:' in col]
+pred_set_no_career.drop(unnamed_cols, axis=1, inplace=True)
+
+# Read in career, adp, draft, and ht/wt dataset
+career_stats = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/Career Stats Data Set/career_stats_database_with_adp_draft_size.csv')
+unnamed_cols = [col for col in career_stats.columns if 'Unnamed:' in col]
+career_stats.drop('Unnamed: 0', axis=1, inplace=True)
+
+# Only keeps the last season for each player to avoid duplicates upon merging
+most_recent_season_career_stats = career_stats.drop_duplicates(subset = 'Player', keep = 'last')
+
+final_pred_set = pd.merge(pred_set_no_career,most_recent_season_career_stats, on='Player', how='left')
+
+# Converts 'Pos' into a one-hot variable
+final_pred_set = pd.get_dummies(final_pred_set, columns=['Pos'])
+
+final_pred_set['season'] = 2016
+
+# Creates one hot for whether or not there was adp present
+final_pred_set['adp_data_present']=np.where(final_pred_set.ix[:,'season'].astype(int) < 2010, 0, 1)
+
+# Create career columns
+final_pred_set['career_fd_pts_entering_next_game'] = final_pred_set['career_fd_pts_entering_next_szn'] + final_pred_set['full_szn_total_fd_points']
+final_pred_set['career_dk_pts_entering_next_game'] = final_pred_set['career_dk_pts_entering_next_szn'] + final_pred_set['full_szn_total_dk_points']
+final_pred_set['career_fd_pts_per_game_entering_next_game'] = final_pred_set['career_fd_pts_per_game_entering_next_szn'] + final_pred_set['full_szn_avg_fd_points']
+final_pred_set['career_dk_pts_per_game_entering_next_game'] = final_pred_set['career_dk_pts_per_game_entering_next_szn'] + final_pred_set['full_szn_avg_dk_points']
+final_pred_set['career_mins_played_entering_next_game'] = final_pred_set['career_mins_played_entering_next_szn'] + final_pred_set['full_szn_total_mp']
+final_pred_set['career_games_played_entering_next_game'] = final_pred_set['career_games_played_entering_next_szn'] + np.array(final_pred_set['full_szn_total_mp']/final_pred_set['full_szn_avg_mp'])
+final_pred_set['career_fd_pts_per_min_entering_next_game'] = final_pred_set['career_fd_pts_entering_next_game']/final_pred_set['career_mins_played_entering_next_game']
+final_pred_set['career_dk_pts_per_min_entering_next_game'] = final_pred_set['career_dk_pts_entering_next_game']/final_pred_set['career_mins_played_entering_next_game']
+
+#########################################################################################################
+
+# Reading in prior data sets
+
+first_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_first_year_priors.csv")
+first_year_priors = first_year_priors.ix[:,['Player','first_year_season' , "xgb_pred_first_year_('reg_szn_total_fd_pts', '')" , "rf_pred_first_year_('reg_szn_total_fd_pts', '')" , "avg_pred_first_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_first_year_('reg_szn_total_dk_pts', '')" , "rf_pred_first_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_first_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_first_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_first_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_first_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_first_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_first_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_first_year_('DK_prior_^0.7_of_total', '')"]]
+first_year_priors.rename(columns={'first_year_season':'season' , "xgb_pred_first_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_first_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_first_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_first_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_first_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_first_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_first_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_first_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_first_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_first_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_first_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_first_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+second_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_second_year_priors.csv")
+second_year_priors = second_year_priors.ix[:,['Player','second_year_season' , "xgb_pred_second_year_('reg_szn_total_fd_pts', '')" , "rf_pred_second_year_('reg_szn_total_fd_pts', '')" , "avg_pred_second_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_second_year_('reg_szn_total_dk_pts', '')" , "rf_pred_second_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_second_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_second_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_second_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_second_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_second_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_second_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_second_year_('DK_prior_^0.7_of_total', '')"]]
+second_year_priors.rename(columns={'second_year_season':'season' , "xgb_pred_second_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_second_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_second_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_second_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_second_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_second_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_second_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_second_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_second_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_second_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_second_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_second_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+third_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_third_year_priors.csv")
+third_year_priors = third_year_priors.ix[:,['Player','third_year_season' , "xgb_pred_third_year_('reg_szn_total_fd_pts', '')" , "rf_pred_third_year_('reg_szn_total_fd_pts', '')" , "avg_pred_third_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_third_year_('reg_szn_total_dk_pts', '')" , "rf_pred_third_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_third_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_third_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_third_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_third_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_third_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_third_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_third_year_('DK_prior_^0.7_of_total', '')"]]
+third_year_priors.rename(columns={'third_year_season':'season' , "xgb_pred_third_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_third_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_third_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_third_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_third_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_third_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_third_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_third_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_third_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_third_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_third_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_third_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+fourth_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fourth_year_priors.csv")
+fourth_year_priors = fourth_year_priors.ix[:,['Player','fourth_year_season' , "xgb_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_fourth_year_('reg_szn_total_dk_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_fourth_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_fourth_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('DK_prior_^0.7_of_total', '')"]]
+fourth_year_priors.rename(columns={'fourth_year_season':'season' , "xgb_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_fourth_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_fourth_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_fourth_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+fifth_year_priors = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RF & xgBoost Prior Modeling Data/Data Sets With Predicted Priors/predicted_fifth_year_priors.csv")
+fifth_year_priors = fifth_year_priors.ix[:,['Player','fifth_year_season' , "xgb_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_fd_pts', '')" , "xgb_pred_fifth_year_('reg_szn_total_dk_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_dk_pts', '')" ,	"avg_pred_fifth_year_('reg_szn_total_dk_pts', '')" , "xgb_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('FD_prior_^0.7_of_total', '')" , "xgb_pred_fifth_year_('DK_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('DK_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('DK_prior_^0.7_of_total', '')"]]
+fifth_year_priors.rename(columns={'fifth_year_season':'season' , "xgb_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "xgb_pred_('reg_szn_total_fd_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "rf_pred_('reg_szn_total_fd_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_fd_pts', '')" : "avg_pred_('reg_szn_total_fd_pts', '')" , "xgb_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "xgb_pred_('reg_szn_total_dk_pts', '')" , "rf_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "rf_pred_('reg_szn_total_dk_pts', '')" , "avg_pred_fifth_year_('reg_szn_total_dk_pts', '')" : "avg_pred_('reg_szn_total_dk_pts', '')" , "xgb_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "xgb_pred_('FD_prior_^0.7_of_total', '')" , "rf_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "rf_pred_('FD_prior_^0.7_of_total', '')"  , "avg_pred_fifth_year_('FD_prior_^0.7_of_total', '')" : "avg_pred_('FD_prior_^0.7_of_total', '')"  , "xgb_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "xgb_pred_('DK_prior_^0.7_of_total', '')"  , "rf_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "rf_pred_('DK_prior_^0.7_of_total', '')" , "avg_pred_fifth_year_('DK_prior_^0.7_of_total', '')" : "avg_pred_('DK_prior_^0.7_of_total', '')"}, inplace=True)
+
+all_priors=first_year_priors.append(second_year_priors).append(third_year_priors).append(fourth_year_priors).append(fifth_year_priors)
+
+final_pred_set = pd.merge(final_pred_set, all_priors, on=['Player','season'], how = 'left')
+
+####################################################################################################################################################
+
+### Merges today's Vegas lines in with prediction set
+all_vegas = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/2016-2017 Vegas Lines/todays_vegas_lines.csv")
+all_vegas['Close Line'] = all_vegas['Line']
+all_vegas['Close Total'] = all_vegas['Total']
+all_vegas.drop(['Line','Total','Unnamed: 0','Date'],axis=1,inplace=True)
+
+#######################################################################
+### Creates categorical variables for vegas lines ###
+
+# Creates 'avg_line' to be used for creation of categorical variables --> use average b/c it will be nearly impossible to have final vegas line in model, use average to get line in between initial and final line, most representative of what will be supplied to model
+all_vegas['avg_line'] = all_vegas['Close Line']
+
+# Close Game
+all_vegas['close_game'] = np.array([1 if math.fabs(all_vegas.ix[row,'avg_line']) <= 3 else 0 for row in range(len(all_vegas))])
+
+# Small Win
+all_vegas['small_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -3) & (all_vegas.ix[row,'avg_line'] >= -6.5) else 0 for row in range(len(all_vegas))])
+
+# Medium Win
+all_vegas['medium_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -6.5) & (all_vegas.ix[row,'avg_line'] >= -11) else 0 for row in range(len(all_vegas))])
+
+# Big Win
+all_vegas['big_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -11) else 0 for row in range(len(all_vegas))])
+
+# Small Loss
+all_vegas['small_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 3) & (all_vegas.ix[row,'avg_line'] < 6.5) else 0 for row in range(len(all_vegas))])
+
+# Medium Win
+all_vegas['medium_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 6.5) & (all_vegas.ix[row,'avg_line'] <= 11) else 0 for row in range(len(all_vegas))])
+
+# Big Win
+all_vegas['big_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 11) else 0 for row in range(len(all_vegas))])
+
+########################################################################
+
+# Merges final_pred_set with vegas data and only keeps players who have a match in the vegas data
+final_pred_set_vegas_location = pd.merge(final_pred_set,all_vegas, left_on='Tm',right_on='team_formatted', how='right')
+
+final_pred_set_vegas_location.to_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Prediction Set/final_pred_set_3_10.csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Old
+
+# ### Need to merge final_pred_set_vegas_location with scraped opp def stats here ###
+
+# all_data = pd.read_csv('/Users/Miller/Desktop/opp_def.csv')
+
+
+# today_preds = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/daily_predictions_2_25_69.csv")
+
+# today_preds.head()
+
+# beaut = pd.merge(final_pred_set_vegas_location,today_preds,on='Player',how='outer')
+
+# beaut_final = pd.merge(beaut,all_data,left_on='Opponent',right_on='Team',how='left')
+
+# beaut_final.to_csv("/Users/Miller/Desktop/preds_with_opp_def.csv")

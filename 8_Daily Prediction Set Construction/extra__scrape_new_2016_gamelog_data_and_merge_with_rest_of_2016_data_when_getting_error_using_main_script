@@ -1,0 +1,103 @@
+from urllib.request import urlopen
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import requests
+
+
+### Scrapes new game data
+
+# 2/14 --> last i = 17400
+# 2/16 --> last i = 17700
+# 2/18 --> last i = 18100
+# 3/10 --> last i = 20500
+
+j = 1
+i = 18100
+while j > 0:
+    
+    # Use this block for when getting the following error using the original script: "RemoteDisconnected: Remote end closed connection without response"
+    MAX_RETRIES = 20
+    url = "http://www.basketball-reference.com/play-index/pgl_finder.cgi?request=1&player_id=&match=game&year_min=2017&year_max=2017&age_min=0&age_max=99&team_id=&opp_id=&is_playoffs=N&round_id=&game_num_type=&game_num_min=&game_num_max=&game_month=&game_day=&game_location=&game_result=&is_starter=&is_active=&is_hof=&pos_is_g=Y&pos_is_gf=Y&pos_is_f=Y&pos_is_fg=Y&pos_is_fc=Y&pos_is_c=Y&pos_is_cf=Y&c1stat=&c1comp=&c1val=&c2stat=&c2comp=&c2val=&c3stat=&c3comp=&c3val=&c4stat=&c4comp=&c4val=&is_dbl_dbl=&is_trp_dbl=&order_by=date_game&order_by_asc=Y&offset={}".format(i)
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(max_retries=MAX_RETRIES)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+    r = session.get(url)
+    
+    soup = BeautifulSoup(r.content, 'lxml')
+
+    # Breaks loop upon reaching blank table
+    if len(soup.find_all("table")) == 0:
+        print("Done")
+        break
+    
+    # Returns the first table in html_content
+    table = soup.find_all("table")[0]
+
+    if j == 1:
+        
+        # Accessing the row of the html object that contains the column heading names
+        column_heading_row = soup.find_all("tr")[0]
+
+        # Returns the tags (?)
+        th_tags = column_heading_row.find_all("th")
+
+        # Creates a list containing the column names
+        col_names=[]
+        for th in th_tags:
+            col_names.append(th.get_text())
+    
+        col_names_minus_rank = col_names[1:]
+    
+        # Adds names for missing column names
+        col_names_minus_rank[5]="Location"
+        col_names_minus_rank[7]="Result"
+        
+        # Returns the 2nd (could be any) row in the table
+        any_row = table.find_all("tr")[3]
+    
+        # Returns number of columns in table
+        num_of_columns = len(any_row.find_all('td'))
+    
+        # Initializes new dataframe
+        new_df = pd.DataFrame(columns=range(num_of_columns), index=[0])
+        
+        # Used to iterate through html table in loop below
+        row_marker = 0
+    
+    # Parses through table and puts stats into dataframe going across each row
+    for row in table.find_all('tr'):
+        column_marker = 0
+        columns = row.find_all('td')
+        for column in columns:
+            new_df.ix[row_marker,column_marker] = column.get_text()
+            column_marker += 1
+            if column_marker == num_of_columns:
+                row_marker += 1
+    
+    # Increments i which increments the page number (100 = 2nd page)
+    print(i)
+    i += 100
+    j += 1
+    
+# Changes columns names
+new_df.columns = col_names_minus_rank
+
+###################################################################################
+
+### Reads in most recently scraped gamelog data ###
+most_recent_gamelog_data = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2016-2017_nba_player_gamelog_most_recent_update.csv")
+most_recent_gamelog_data.drop('Unnamed: 0', axis=1, inplace=True)
+
+# Appends new game data to most recent gamelog scrape
+all_games = most_recent_gamelog_data.append(new_df)
+
+# Drops duplicate rows
+all_games.drop_duplicates(subset=['Player','Date','Age'], inplace=True)
+
+all_games.reset_index(inplace=True)  
+
+all_games.drop('index', axis=1, inplace=True)
+
+all_games.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2016-2017_nba_player_gamelog_most_recent_update.csv')
