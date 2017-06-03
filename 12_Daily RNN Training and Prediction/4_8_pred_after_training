@@ -1,0 +1,341 @@
+import numpy as np
+import pandas as pd
+from sklearn import preprocessing
+from sklearn import decomposition
+
+import theano as theano
+# theano.config.device = 'cuda'
+theano.config.floatX = 'float32'
+
+import keras
+from keras.models import Sequential
+from keras.layers import LSTM, Activation, Dense, Dropout
+import random, time
+import matplotlib.pyplot as plt
+
+def MSE(y, y_pred):
+    return np.average((y-y_pred)**2)
+    
+### Shit to do ###
+
+# Determine how many epochs to train for before predicting
+## Save this trained model 
+
+# Reload trained model and predict on players playing on given day
+## Figure out how to save preds
+
+#filepath = "/Users/Miller/Documents/NBA 2016-17/RNN Daily Training Set/"
+
+datasets = ['4-8_ready_for_training_and_prediction.csv']
+
+# Change to false to remove dropout from LSTM
+dropout_bool = False
+
+# Number of players to skip when calculating mse on first epoch
+players_to_skip_first_epoch = 0
+
+# Indicates for which epoch_num we want to save the predictions for
+epoch_to_save_preds = [3,4]
+
+# Boolean for whether or not to save weights of the model
+save_model = False
+
+# Game being predicted couting from end of gamelog --> 2 = predicting last game since targets are shifted up 1
+## 'Last game' has no 'next game' to predict, so 2 is actually predicting the last game
+games_to_predict = [2]
+
+for x in range(len(datasets)):
+    
+    for game_being_predicted in games_to_predict:
+        
+        # data = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/RNN Daily Prediction Set/4-8_ready_for_training_and_prediction.csv')
+        
+        data = pd.read_csv(datasets[0])
+        
+        data.drop(['date_new','date_in_days'],axis=1, inplace=True)
+        
+        total_number_of_players = len(data.Player.unique())
+        print(total_number_of_players)
+
+        print('game_being_predicted: ' + str(game_being_predicted))
+    
+        print('dataset: ' + str(x))
+        
+        dataset = datasets[x] + "_" + str(game_being_predicted) + 'th_from_last_game_dropout_{0}_skipped_{1}'.format(str(dropout_bool),str(players_to_skip_first_epoch))
+        
+        print('Dataset: ' + str(dataset))
+    
+        # Drops unnamed columns if they exist
+        if np.sum(data.columns.str.contains('Unnamed')) > 0:
+            unnamed_cols = [col for col in data.columns if 'Unnamed' in col]
+            data.drop(unnamed_cols, axis=1, inplace=True)
+    
+        # Shifting all columns associate with vegas data up one row 
+        #  Need to do this to put vegas data of next game with stats from previous game
+        data[["Close Line", "Close Total","close_game","small_win","medium_win","big_win","small_loss","medium_loss","big_loss"]] = data[["Close Line", "Close Total","close_game","small_win","medium_win","big_win","small_loss","medium_loss","big_loss"]].shift(-1)
+        data.fillna(value=0,inplace=True)
+        
+        # Standardizes the targets
+        target_indices = [col for col in range(len(data.columns)) if (data.columns[col] == "fd_pts") or (data.columns[col] == "dk_pts")]
+        
+        targets = np.array(data[target_indices])
+        
+        # Saves the mean of the targets
+        y_mean = np.mean(targets,axis=0)
+        
+        print('mean: ' + str(y_mean))
+        
+        # Have to wrap training targets to prevent 'float has no sqrt' error // Axis=0 to calculate stdev for each column (feature)
+        y_std = np.std(np.float32(targets),axis=0)
+        
+        print('stdev: ' + str(y_std))
+            
+        # center and normalize Y values
+        target_std = np.divide(np.subtract(targets,y_mean),y_std)
+        
+        #####################################################################
+        
+        # Saves player column to be re-appended later
+        player_column = data.Player
+        
+        # To be used later
+        player_list = data.Player.unique()
+        
+        # Drops player column for PCA
+        data.drop(["fd_pts","dk_pts","Player"],axis=1,inplace=True)
+     
+        #################################################################
+        
+        ### PCA ###
+        
+        percent_of_variance_to_capture = 95
+        number_of_components = 44
+        
+        print("number_of_components = " + str(number_of_components))
+        
+        print('Percent of variance to capture: ' + str(percent_of_variance_to_capture))
+        
+        # Initializes PCA function
+        pca = decomposition.PCA(n_components=number_of_components)
+        
+        # Finds principal components
+        pca.fit(data)
+        
+        # Creates new array containing principal components
+        data_pca = np.array(pca.fit_transform(data))
+        
+        ###########
+        
+        # Convert np array of pca-reduced feature set to a dataframe
+        new_data = pd.DataFrame(data_pca)
+        
+        new_data['Player'] = player_column
+        
+        new_data["std_fd_pts"] = 0
+        new_data["std_dk_pts"] = 0
+        new_data[["std_fd_pts","std_dk_pts"]] = target_std
+        
+        #####################################################################
+        
+        # Specifies the width of the feature matrix
+        input_size = new_data.shape[1]-1
+        
+        # Specifies the number of targets
+        output_size = 2
+        
+        # Shuffles the list of players to be tested
+        #np.random.shuffle(player_list)
+        
+        def run_model(num_players=150, num_epochs=1, activation='relu', init='lecun_uniform', optimizer='Adagrad', architecture=[50,25]):
+        
+            model = Sequential()
+            model.add(LSTM(architecture[0], batch_input_shape=(1, 1, input_size), stateful=True, return_sequences=True, init=init))
+            if dropout_bool:
+                print('Dropout 0.5')
+                model.add(Dropout(0.5))
+            
+            for i in range(len(architecture)-1): 
+                model.add(LSTM(architecture[i+1], stateful=True, return_sequences=True, init=init))
+                if dropout_bool:
+                    print('Dropout 0.5')
+                    model.add(Dropout(0.5))
+
+            # Adding Dense Layer
+            model.add(Dense(2, init=init))
+            model.add(Activation('linear'))
+            model.compile(optimizer, loss='mse')
+            
+            # Print Model Summary
+            print(model.summary())
+            
+            # Initialize lists to be filled with data
+            mse_list = []
+            mse_each_50 = []
+            player_names_1 = []
+            pred_list_1 = []
+            player_names_2 = []
+            pred_list_2 = []
+            
+            for i in range(num_epochs):
+                print(str(i+1) + " of " + str(num_epochs) + " epochs\n")
+            
+                count = 1
+                num_players_skipped = 0
+                predictions = []
+                actuals = []
+                
+                for player in player_list[:num_players]:
+                    if (count) % 50 == 0:
+                        print(str(count) + " of " + str(num_players) + " players   " + player)
+        
+                    # Mask out subset of new_data pertaining only to a single player
+                    player_data = new_data.ix[new_data.Player==player,:]
+                    
+                    # Skip players who haven't played enough games
+                    if (len(player_data) < game_being_predicted+1): 
+                        count += 1
+                        num_players_skipped += 1
+                        continue
+                    
+                    # Drops player column
+                    player_data.drop("Player",axis=1,inplace=True)
+                    
+                    # -2 and -1 b/c player column was deleted so std_fd_pts and std_dk_pts are last two columns
+                    target_indices = [len(player_data.columns)-2, len(player_data.columns)-1]
+        
+                    # Creates target array
+                    targets = np.array(player_data.iloc[:,target_indices].shift(-1))
+                    targets = np.array(targets)
+                    
+                    # print(targets[0:5])
+                    
+                    # Convert data frame to numpy array
+                    player_data = np.array(player_data)
+                    
+                    for row in range(len(player_data)-(game_being_predicted)):    
+                        # Preps data to be trained on
+                        game = player_data[row]
+                        game = np.reshape(game, (1,1,game.shape[0]))
+                        next_game_results = targets[row]
+                        next_game_results = np.reshape(next_game_results, (1,1,next_game_results.shape[0]))
+                        # Trains on next_game_results
+                        model.train_on_batch(game, next_game_results)
+                        
+                    # if str(player)[:3] == 'And':
+                    #     print(player)
+                    #     print('Pred: ' + str((model.predict_on_batch(np.reshape(player_data[row+1],(1,1,player_data.shape[1])))[0][0]*y_std)+y_mean))
+                    #     print('Actual: ' + str((targets[row+1]*y_std)+y_mean))
+                    
+                    pred = model.predict_on_batch(np.reshape(player_data[row+1],(1,1,player_data.shape[1])))[0][0]
+                    actual = targets[row+1]
+                    predictions.append(pred)
+                    actuals.append(actual)
+                    
+                    if str(player)[1] == 'a':
+                        print('{}_Pred: '.format(player) + str(pred))
+                        print('{}_Actual: '.format(player) + str(actual))
+                    
+                    # Not predicting on some players before network trains
+                    # if (i > 0) or (count > players_to_skip_first_epoch):
+                    #     predictions.append(model.predict_on_batch(np.reshape(player_data[row+1],(1,1,player_data.shape[1])))[0][0])
+                    #     actuals.append(targets[row+1])
+
+                    # Resets the state of the model before training on next player
+                    model.reset_states()
+                    
+                    # Printing and storing MSE after each increment of 50 players
+                    if count % 50 == 0:
+                        mse_this_50 = MSE(np.array(actuals),np.array(predictions))
+                        # print('MSE after ' + str(count) + 'th player ' + str(MSE(np.array(actuals),np.array(predictions))))
+                        print('MSE after ' + str(count) + 'th player ' + str(mse_this_50))
+                        mse_each_50.append(mse_this_50)
+                        # print(mse_each_50)
+                        
+                    # Increment player count
+                    count += 1
+                    
+                    if (i + 1) == epoch_to_save_preds[0]:
+                            player_names_1.append(player)
+                            pred_list_1.append(((pred*y_std)+y_mean)[1])
+                            # print('PRed two: ' + str(((pred*y_std)+y_mean)[1])
+                    
+                    if (i + 1) == epoch_to_save_preds[1]:
+                            player_names_2.append(player)
+                            pred_list_2.append(((pred*y_std)+y_mean)[1])
+                            # print('PRed two: ' + str(((pred*y_std)+y_mean)[1])
+                    
+                print('Num_players_skipped: ' + str(num_players_skipped))
+                
+                mse = MSE(np.array(actuals), np.array(predictions))
+                mse_list.append(mse)
+            
+                if save_model:
+                    print('Saving weights/model')
+                    # serialize model to JSON
+                    model_json = model.to_json()
+                    with open("/Users/Miller/Documents/NBA 2016-17/LSTM Model and Weights/model_{0}_of_{1}_epochs_{2}_{3}_{4}_{5}_pred_{6}_4_8.json".format(i+1,num_epochs,architecture,optimizer,init,activation,game_being_predicted), "w") as json_file:
+                        json_file.write(model_json)
+                    # serialize weights to HDF5
+                    model.save_weights("/Users/Miller/Documents/NBA 2016-17/LSTM Model and Weights/model_{0}_of_{1}_epochs_{2}_{3}_{4}_{5}_pred_{6}_4_8.h5".format(i+1,num_epochs,architecture,optimizer,init,activation,game_being_predicted))
+                    print("Saved model to disk") 
+                 
+            return [arch, activation, optimizer, init, np.average(mse_list),num_epochs,mse_list,mse_each_50,player_names_1,pred_list_1,player_names_2,pred_list_2]
+        
+        #parameters to tweak
+        activations = ['none']# ['elu','relu'] #, 'sigmoid', 'tanh'
+        inits = ['glorot_normal']#'lecun_uniform',
+        optimizers = ['Adam']#['Adagrad','rmsprop'] #, 'sgd', 'rmsprop'
+        architectures = [[16,8]]#,[16,8]]#,[16,8,4]]#,[22,11],[44,22]#[[50, 25],[50,75,25],[100,50],[50,30,15],[100,50],[25,50,10]]
+
+        results = []
+        num_players = total_number_of_players
+        arch_num = 0
+        num_epochs = [5]
+        for act in activations:
+            for init in inits:
+                for arch in architectures:
+                    for opt in optimizers:
+                        arch_num+=1
+                        for epoch_num in num_epochs:
+                            print("Architecture:\t"+str(arch)+"\n")
+                            print("Optimizer:\t"+str(opt)+"\n")
+                            print("Epochs:\t"+str(epoch_num)+"\n")
+                            print("Initialization:\t"+str(init)+"\n")
+                            result = run_model(num_players=num_players, num_epochs=epoch_num, activation=act, init=init, optimizer=opt, architecture=arch)
+                            results.append(result)
+            
+                            print("\nMSE:\t"+str(result[4])+"\n\n")
+         
+        
+        og_results = pd.read_csv('/Users/Miller/Desktop/final_prediction_results.csv')
+        
+        # Drops unnamed columns if they exist
+        if np.sum(og_results.columns.str.contains('Unnamed')) > 0:
+            unnamed_cols = [col for col in og_results.columns if 'Unnamed' in col]
+            og_results.drop(unnamed_cols, axis=1, inplace=True)
+                       
+        training_results = pd.DataFrame(columns=['arch','act','opt','init','mean_sq_err','dataset','variance_kept','number_of_components','num_players','num_epochs','game_being_predicted','mse_list','mse_each_50','player_names_1','pred_list_1','player_names_2','pred_list_2'],index=[0])
+        
+        for i in range(len(results)):
+            training_results.ix[i,'arch']=results[i][0]
+            training_results.ix[i,'act']=results[i][1]
+            training_results.ix[i,'opt']=results[i][2]
+            training_results.ix[i,'init']=results[i][3]
+            training_results.ix[i,'mean_sq_err']=results[i][4]
+            training_results.ix[i,'mse_list']=results[i][6]
+            training_results.ix[i,'mse_each_50']=results[i][7]
+            training_results.ix[i,'player_names_1']=results[i][8]
+            training_results.ix[i,'pred_list_1']=results[i][9]
+            training_results.ix[i,'player_names_2']=results[i][10]
+            training_results.ix[i,'pred_list_2']=results[i][11]
+            training_results.ix[i,'dataset']=dataset
+            training_results.ix[i,'variance_kept']=percent_of_variance_to_capture
+            training_results.ix[i,'number_of_components'] = number_of_components
+            training_results.ix[i,'num_players'] = num_players
+            training_results.ix[i,'num_epochs'] = results[i][5]
+            training_results.ix[i,'game_being_predicted'] = game_being_predicted
+            
+        final_results = og_results.append(training_results)
+
+        
+        final_results.to_csv('/Users/Miller/Desktop/final_prediction_results.csv')
