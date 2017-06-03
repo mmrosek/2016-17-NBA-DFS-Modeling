@@ -1,0 +1,229 @@
+import pandas as pd
+import numpy as np
+from sklearn.metrics import mean_squared_error
+import math
+
+preds_3_10 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Daily Modeling Data/Daily Predictions/daily_predictions_3_10.csv", usecols=['Player',"xgb_pred_('FD_POINTS', 64.0)",'season'])
+
+fp_proj_3_10 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/DFS/fantasy_pros_proj/fp_proj_3_10.csv")
+
+fd_3_10 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/DFS/fd salaries/fd_salaries_3_10.csv")
+
+# Create fd proj for fantasypros
+fp_proj_3_10['fd_proj']=fp_proj_3_10['PTS']+1.2*fp_proj_3_10['REB']+1.5*fp_proj_3_10['AST']+2*fp_proj_3_10['BLK']+2*fp_proj_3_10['STL']-fp_proj_3_10['TO']
+
+# Drops unwanted columns
+cols_to_drop = [col for col in fp_proj_3_10.columns if (col != 'Player') & (col != 'fd_proj')]
+fp_proj_3_10.drop(cols_to_drop, axis=1, inplace=True)
+
+# Merges final_pred_set with vegas data and only keeps players who have a match in the vegas data
+fp_and_xgb_preds_3_10 = pd.merge(preds_3_10[preds_3_10.season==2016],fp_proj_3_10, left_on='Player',right_on='Player', how='outer')
+
+# Function to convert results df to dataframe with scores and names
+def create_lstm_df(lstm_preds,label):
+    split_names = lstm_preds['player_names'].strip("'").split(",")
+    clean_names = [name.strip(" ").strip("'").strip('[').strip('"').strip(']') for name in split_names]
+    split_preds = lstm_preds['pred_list'].split(",")
+    clean_preds = [float(name.strip(" ").strip("'").strip('[').strip('"').strip(']')) for name in split_preds]
+    lstm_names_preds_df = pd.DataFrame(columns=['Name','lstm_pred_fd_pts_{0}'.format(str(label))])
+    lstm_names_preds_df['Name'] = np.array(clean_names)
+    lstm_names_preds_df['lstm_pred_fd_pts_{0}'.format(str(label))] = np.array(clean_preds)
+    return(lstm_names_preds_df)
+    
+lstm_preds_new = pd.read_csv("/Users/Miller/Desktop/final_prediction_results.csv")
+
+lstm_train = lstm_preds_new.iloc[3,:]
+
+train = create_lstm_df(lstm_train,'train')
+
+lstm_pred = lstm_preds_new.iloc[4,:]
+    
+pred = create_lstm_df(lstm_pred,'pred')
+
+# Merging different types of lstm predictions
+lstm_predictions = pd.merge(train, pred, on='Name', how='inner')
+
+all_preds = pd.merge(lstm_predictions, fp_and_xgb_preds_3_10, left_on='Name', right_on='Player', how='right')
+
+# all_preds.to_csv("/Users/Miller/Desktop/3_10_errors.csv")
+
+# Read in results
+ground_truth = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Python Scripts/12.Daily RNN Model Fitting/3-10_ready_for_training_and_prediction.csv')
+
+gt_fd_pts = ground_truth.ix[ground_truth.date_new == '3/10/2017',['Player','fd_pts']]
+
+# Merge predictions with actual results
+final_beaut = pd.merge(all_preds,gt_fd_pts,left_on='Player',right_on='Player',how='left')
+
+final_beaut.to_csv("/Users/Miller/Desktop/final_test.csv")
+
+# Drop unwanted columns
+final_beaut.drop(['season','Player_y','Player_x'],axis=1,inplace=True)
+
+# Drop rows where Name is missing
+final_beaut = final_beaut[~final_beaut.Name.isnull()]
+
+final_beaut = final_beaut.fillna(value=0)
+
+relevant_players_df = final_beaut
+
+#########################################################
+
+## Use to remove players not projected > 15 by any model
+# fifteen_plus = np.where((final_beaut['fd_proj'] > 15) | (final_beaut["xgb_pred_('FD_POINTS', 64.0)"]>15) | (final_beaut["lstm_pred_fd_pts"]>15), True, False)
+# relevant_players_df = relevant_players_df[fifteen_plus]
+
+#############################################################
+
+relevant_players_df.reset_index(inplace=True)
+
+# Use if want to do no player manipulation at all 
+rel_players_no_inj = relevant_players_df  
+
+########################################################################################################
+
+# Using updated player list with outer merge
+relevant_players_df = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/Final Predictions/preds_3_10_outer_merge_fd_out.csv')
+
+# Removal of players known to not be playing
+
+# List of players known to be out with injury
+players_to_remove = ['Zach LaVine','Jabari Parker','Malcolm Brogdon','Nikola Vucevic','Rudy Gay','Brook Lopez','Kevin Durant','Kyle Lowry', 'Nerlens Noel','Frank Kaminsky','Kenneth Faried','Michael Beasley','Jodie Meeks','Malachi Richardson','Miles Plumlee','Mike Dunleavy','Ramon Sessions','Shaun Livingston','Joe Harris']
+
+# Create list of indices of players who were known to be injured to remove
+indices_to_remove = []
+for row in range(len(relevant_players_df)):
+    if relevant_players_df.ix[row, 'Name'] in players_to_remove:
+        indices_to_remove.append(False)
+    else:
+        indices_to_remove.append(True)
+        
+rel_players_no_inj = relevant_players_df[np.array(indices_to_remove)]
+
+lineup_opt = rel_players_no_inj
+
+########################################################################################################3
+
+lineup_opt = pd.merge(rel_players_no_inj, fd_3_10[['Nickname','Salary','Position','Injury Indicator']], left_on='Name',right_on='Nickname',how='left')
+
+lineup_opt.reset_index(inplace=True)
+
+lineup_opt.drop('index',axis=1,inplace=True)
+len(lineup_opt)
+# Removes players who were not available on FanDuel
+legit_relevant = lineup_opt[~lineup_opt.Salary.isnull()]
+
+# Remove players designated as out in FanDuel salary list
+legit_relevant = legit_relevant[legit_relevant['Injury Indicator']!='O']
+
+math.sqrt(mean_squared_error(legit_relevant["xgb_pred_('FD_POINTS', 64.0)"],legit_relevant.fd_pts))
+
+math.sqrt(mean_squared_error(legit_relevant.fd_proj, legit_relevant.fd_pts))
+
+math.sqrt(mean_squared_error(legit_relevant.lstm_pred_fd_pts_pred, legit_relevant.fd_pts))
+
+math.sqrt(mean_squared_error(legit_relevant.lstm_pred_fd_pts_train, legit_relevant.fd_pts))
+
+legit_relevant.to_csv('/Users/Miller/Documents/NBA 2016-17/Final Predictions/preds_3_10_outer_merge_fd_out.csv')
+
+
+
+len(legit_relevant)
+
+# xgb_lineup = [Dwight Howard                     33.05398      C   7100
+# 65    Evan Fournier                     27.67478     SG   5600
+# 74     Gorgui Dieng                     26.71367     PF   5600
+# 76  Harrison Barnes                     29.20502     SF   6000
+# 80    Isaiah Thomas                     41.79487     PG   9200
+# 115    Kemba Walker                     37.74137     PG   8400
+# 137 Markieff Morris                     27.79712     PF   6000
+# 163     Paul George                     38.20777     SF   7900
+# 181 Sean Kilpatrick    
+
+xgb = ['Dwight Howard','Evan Fournier','Gorgui Dieng','Harrison Barnes','Isaiah Thomas','Kemba Walker','Markieff Morris','Paul George','Sean Kilpatrick']
+
+xgb_df=pd.DataFrame(np.array(xgb))
+
+xgb_actuals = pd.merge(xgb_df, lineup_opt, left_on=0, right_on='Name',how='left')
+
+np.sum(xgb_actuals[['Name','fd_pts']])
+
+xgb_actuals
+
+# lstm_train_lineup = Name lstm_pred_fd_pts_train fd_pos Salary
+# 5         Al Horford               32.30678      C   6000
+# 53   Dennis Schroder               33.54541     PG   7100
+# 58    Draymond Green               35.42135     PF   8100
+# 63       Eric Gordon               25.96217     SG   5000
+# 76   Harrison Barnes               30.79531     SF   6000
+# 81  Isaiah Whitehead               21.06724     PG   3500
+# 98      Jimmy Butler               42.51463     SF   9100
+# 152    Nicolas Batum               34.01137     SG   7200
+# 164     Paul Millsap               37.21015     PF   7900
+# > 
+
+lstm = ['Al Horford','Dennis Schroder','Draymond Green','Harrison Barnes','Isaiah Whitehead','Eric Gordon','Jimmy Butler','Nicolas Batum','Paul Millsap']
+
+lstm_df=pd.DataFrame(np.array(lstm))
+
+lstm_actuals = pd.merge(lstm_df, lineup_opt, left_on=0, right_on='Name',how='left')
+
+np.sum(lstm_actuals[['Name','fd_pts']])
+
+lstm_actuals[['Name','fd_pts']]
+
+
+# lstm_pred_lineup = Name lstm_pred_fd_pts_pred fd_pos Salary
+# 22     Bradley Beal              30.24551     SG   7600
+# 53  Dennis Schroder              30.47393     PG   7100
+# 58   Draymond Green              31.25099     PF   8100
+# 62    Elfrid Payton              30.59939     PG   7000
+# 76  Harrison Barnes              28.44289     SF   6000
+# 98     Jimmy Butler              31.88758     SF   9100
+# 139   Mason Plumlee              27.87952      C   5600
+# 181 Sean Kilpatrick              20.92338     SG   4200
+# 199   Trevor Booker              21.04435     PF   5300
+# > 
+# > FDsol$optimum
+# [1] 252.7475
+
+lstm = ['Bradley Beal','Dennis Schroder','Elfrid Payton','Harrison Barnes','Jimmy Butler','Draymond Green','Mason Plumlee','Sean Kilpatrick','Trevor Booker']
+
+lstm_df=pd.DataFrame(np.array(lstm))
+
+lstm_pred_no_train = pd.merge(lstm_df, lineup_opt, left_on=0, right_on='Name',how='left')
+
+np.sum(lstm_pred_no_train[['Name','fd_pts']])
+
+lstm_pred_no_train[['Name','fd_pts']]
+
+
+#fpros =  Name fd_proj fd_pos Salary
+# 5         Al Horford    38.1      C   6000
+# 14     Avery Bradley    32.9     SG   5500
+# 60     Dwight Powell    21.7     PF   3500
+# 74      Gorgui Dieng    26.8     PF   5600
+# 88      James Harden    62.8     SG  11800
+# 94       Jeff Teague    37.3     PG   7000
+# 98      Jimmy Butler    44.4     SF   9100
+# 157      Otto Porter    31.4     SF   5900
+# 160 Patrick Beverley    30.7     PG   5500
+# > 
+# > FDsol$optimum
+# [1] 326.1
+# > 
+# > FDsol$auxiliary$primal
+# [1]     2     2     2     2     1 59900
+
+fp = ['Al Horford','Avery Bradley','Dwight Powell','Gorgui Dieng','James Harden','Jeff Teague','Jimmy Butler','Otto Porter','Patrick Beverley']
+
+fp_df=pd.DataFrame(np.array(fp))
+
+fp_actuals = pd.merge(fp_df, lineup_opt, left_on=0, right_on='Name',how='left')
+
+np.sum(fp_actuals[['Name','fd_pts']])
+
+fp_actuals[['Name','fd_pts']]
+
+
+
