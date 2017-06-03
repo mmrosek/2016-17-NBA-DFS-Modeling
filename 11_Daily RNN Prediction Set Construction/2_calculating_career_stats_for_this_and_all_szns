@@ -1,0 +1,124 @@
+import pandas as pd
+import numpy as np
+import time
+
+# Calculating career games and minutes for each game
+
+# all_seasons = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/1_all_szns_days_and_games_since_last_game.csv')
+# all_seasons = all_seasons.drop(['Unnamed: 0','index'],axis=1)
+
+before_this_season =  pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2_all_szns_days_and_games_since_last_game_w_career_stats_entering_next_game_and_szn.csv')
+before_this_season = before_this_season.drop(['index'],axis=1)
+
+before_this_season.career_games_played_entering_next_game
+
+# Read in 2016-2017 gamelog data
+this_season = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/1_this_szn_days_and_games_since_last_game.csv')
+this_season = this_season.drop(['Unnamed: 0','index'],axis=1)
+
+# Combine this season data with all_seasons
+all_seasons=before_this_season.append(this_season)
+
+# Sorts dataframe by Player and then by Age
+all_seasons = all_seasons.sort_values(['Player','Age'], axis=0)
+all_seasons = all_seasons.reset_index()
+all_seasons.drop('index', axis=1, inplace=True)
+
+### Calculates double doubles and triple doubles ###
+
+all_seasons['double_double'] = np.where(np.sum(all_seasons.ix[:,["PTS","TRB",'AST',"STL",'BLK',]] >= 10, axis=1) == 2, 1, 0)
+
+all_seasons['triple_double'] = np.where(np.sum(all_seasons.ix[:,["PTS","TRB",'AST',"STL",'BLK',]] >= 10, axis=1) >= 3, 1, 0)
+
+######################################################
+
+# Imputing 2 for number of minutes played by Ryan Hollins and Elton Brand where bref has no minute value
+all_seasons.ix[all_seasons.MP.isnull(),'MP']=2
+
+# Imputing 0.4 for all rows with minute values of 0
+all_seasons.ix[all_seasons.MP==0,'MP']=0.4
+
+######################################################
+
+### Calculates fd and dk pts and pts per min for each game
+
+all_seasons['fd_pts']=np.array(all_seasons['PTS'] + 2*all_seasons['BLK'] + 1.2*all_seasons['TRB'] + 2*all_seasons['STL'] + 1.5*all_seasons['AST'] - all_seasons['TOV'])
+
+all_seasons['dk_pts']=np.array(all_seasons['PTS'] + 2*all_seasons['BLK'] + 1.25*all_seasons['TRB'] + 2*all_seasons['STL'] + 1.5*all_seasons['AST'] - 0.5*all_seasons['TOV'] + 0.5*all_seasons['3P'] + 1.5*all_seasons['double_double'] + 3*all_seasons['triple_double'])
+
+all_seasons['fd_pts_per_min']=all_seasons['fd_pts']/all_seasons['MP']
+
+all_seasons['dk_pts_per_min']=all_seasons['dk_pts']/all_seasons['MP']
+
+# Fills n/a values with 0
+all_seasons = all_seasons.fillna(value=0)
+
+######################################################
+
+players = all_seasons.Player.unique()
+
+# initializes empty dataframe
+all_seasons_career = pd.DataFrame(columns = all_seasons.columns,index=[])
+
+player_count = 0
+
+# players = ['Briante Weber']
+
+for player in players:
+    
+    # Print statement for progress udpate
+    player_count +=1
+    if player_count % 100 == 0:
+        print(player_count)
+
+    # Masks out rows corresponding to a single player
+    player_df = all_seasons[all_seasons.Player == player]
+    player_df = player_df.sort_values(['Player','Age'], axis=0)
+    player_df.reset_index(inplace=True)
+    
+    # Checks if the bottomr row has career stats (means we don't need to calculate anything for this player)
+    if player_df.ix[len(player_df)-1,'career_games_played_entering_next_game'] > 0:
+        
+        all_seasons_career = all_seasons_career.append(player_df)     
+
+        continue
+    
+    else: 
+        
+        # Have no use for players who only played one career game
+        if len(player_df) > 1:
+        
+            # Return index of first row that does not contain career stats (not including first row that is first game of career)
+            first_row_no_career_stats = np.argmax((player_df.career_games_played_entering_next_game == 0)[1:])
+        
+            # print(first_row_no_career_stats)
+        
+            # Do calculations
+            for row in range(first_row_no_career_stats,len(player_df)):
+                if row == len(player_df) - 1:
+                    player_df.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([player_df.ix[row-1,'career_games_played_entering_next_game']+1 , player_df.ix[row-1,'career_mins_played_entering_next_game']+player_df.ix[row-1,'MP'] , player_df.ix[row-1,'career_fd_pts_entering_next_game']+player_df.ix[row-1,'fd_pts'] , player_df.ix[row-1,'career_dk_pts_entering_next_game']+player_df.ix[row-1,'dk_pts']])
+                elif (player_df.ix[row,'Player'] != player_df.ix[row+1,'Player']) | (player_df.ix[row,'season'] != player_df.ix[row+1,'season']):
+                    player_df.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([player_df.ix[row-1,'career_games_played_entering_next_game']+1 , player_df.ix[row-1,'career_mins_played_entering_next_game']+player_df.ix[row-1,'MP'] , player_df.ix[row-1,'career_fd_pts_entering_next_game']+player_df.ix[row-1,'fd_pts'] , player_df.ix[row-1,'career_dk_pts_entering_next_game']+player_df.ix[row-1,'dk_pts']])
+                else:
+                    player_df.ix[row,['career_games_played_entering_next_game','career_mins_played_entering_next_game','career_fd_pts_entering_next_game','career_dk_pts_entering_next_game']]=np.array([player_df.ix[row-1,'career_games_played_entering_next_game']+1 , player_df.ix[row-1,'career_mins_played_entering_next_game']+player_df.ix[row-1,'MP'] , player_df.ix[row-1,'career_fd_pts_entering_next_game']+player_df.ix[row-1,'fd_pts'] , player_df.ix[row-1,'career_dk_pts_entering_next_game']+player_df.ix[row-1,'dk_pts']])
+            
+            all_seasons_career = all_seasons_career.append(player_df)
+            
+        else:
+            
+            continue
+
+#####################################################################################
+
+# Calculates career per min and per game fantasy pts
+all_seasons_career['career_fd_pts_per_min_entering_next_game']=all_seasons_career['career_fd_pts_entering_next_game']/all_seasons_career['career_mins_played_entering_next_game']
+all_seasons_career['career_dk_pts_per_min_entering_next_game']=all_seasons_career['career_dk_pts_entering_next_game']/all_seasons_career['career_mins_played_entering_next_game']
+all_seasons_career['career_fd_pts_per_game_entering_next_game']=all_seasons_career['career_fd_pts_entering_next_game']/all_seasons_career['career_games_played_entering_next_game']
+all_seasons_career['career_dk_pts_per_game_entering_next_game']=all_seasons_career['career_dk_pts_entering_next_game']/all_seasons_career['career_games_played_entering_next_game']
+
+# all_seasons_career['career_fd_pts_per_min_entering_next_szn']=all_seasons_career['career_fd_pts_entering_next_szn']/all_seasons_career['career_mins_played_entering_next_szn']
+# all_seasons_career['career_dk_pts_per_min_entering_next_szn']=all_seasons_career['career_dk_pts_entering_next_szn']/all_seasons_career['career_mins_played_entering_next_szn']
+# all_seasons_career['career_fd_pts_per_game_entering_next_szn']=all_seasons_career['career_fd_pts_entering_next_szn']/all_seasons_career['career_games_played_entering_next_szn']
+# all_seasons_career['career_dk_pts_per_game_entering_next_szn']=all_seasons_career['career_dk_pts_entering_next_szn']/all_seasons_career['career_games_played_entering_next_szn']
+
+all_seasons_career.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2_this_and_all_szns_days_and_games_career_stats.csv')

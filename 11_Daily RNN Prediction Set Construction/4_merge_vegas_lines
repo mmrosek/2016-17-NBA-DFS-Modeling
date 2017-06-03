@@ -1,0 +1,245 @@
+import pandas as pd
+import numpy as np
+import datetime
+import math
+from sklearn import linear_model
+
+# Read in all_seasons data set
+#all_seasons=pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_szns_days_games_since_last_game_categorical_w_career_games_mins_pts_per_min_game.csv')
+
+# 2/18 read in
+all_seasons = pd.read_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/3_this_and_all_szns_days_and_games_since_last_game_categorical_w_career_stats_entering_next_game_and_szn.csv')
+# Drops unwanted columns
+all_seasons = all_seasons.drop(['Unnamed: 0','index'],axis=1)
+
+###########################################################################################
+
+### Read in vegas line data from 1998-2007 with all_seasons
+
+for year in range(1998,2008):
+    one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/Formatted Files/{}_formatted.csv".format(year))
+    one_year["season"] = year
+    if (year == 2005) | (year == 2006):
+        one_year.ix[one_year.team_formatted=='NOH','team_formatted']='NOK'
+    if (year == 1998) | (year == 1999) | (year == 2000) | (year == 2001):
+        one_year.ix[one_year.team_formatted=='CHA','team_formatted']='CHH'
+    if year == 1998:
+        vegas_up_to_2007=one_year
+    else:
+        vegas_up_to_2007 = vegas_up_to_2007.append(one_year)
+
+vegas_up_to_2007.reset_index(drop=True, inplace=True)
+
+############################################################################################
+############################################################################################
+
+# Creates new df with two columns, one for number of points for given team and one for opponent for each game --> not commented b/c it is used below
+
+foo = lambda x: pd.Series([i for i in x.split('-')])
+score_df = vegas_up_to_2007['Result'].apply(foo)
+score_df = score_df.rename(columns={0:'own',1:'opponent'})
+
+###########################################################################################
+###########################################################################################
+
+### Read in vegas line data 
+
+for year in range(8,16):
+    if year < 9:
+        one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/nba_odds_200{0}-0{1}_with_game_number.csv".format(year,year+1))
+        one_year["season"] = 2000+year
+    elif year == 9:
+        one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/nba_odds_200{0}-{1}_with_game_number.csv".format(year,year+1))
+        one_year["season"] = 2000+year
+    else:
+        one_year = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/nba_odds_20{0}-{1}_with_game_number.csv".format(year,year+1))
+        one_year["season"] = 2000+year
+    if year == 8:
+        vegas_from_2008_through_2015 = one_year
+    else:
+        vegas_from_2008_through_2015 = vegas_from_2008_through_2015.append(one_year)
+############################################################################################
+
+### Imputes missing vegas lines through linear regression ###
+
+# Subsets data set to include columns desired for prediction and to be predicted
+vegas_prediction = vegas_up_to_2007.copy()
+
+# Creates new columns
+vegas_prediction[['own_score','opponent_score']]=score_df
+
+# Imputes missing Open Total values based on mean of non missing values
+missing_total_mask = vegas_prediction['Open Total'].isnull()
+vegas_prediction.ix[missing_total_mask,'Open Total'] = np.mean(vegas_prediction.ix[~missing_total_mask,'Open Total'])
+
+# Creates result column
+vegas_prediction['result']=vegas_prediction['opponent_score'].astype(int)-vegas_prediction['own_score'].astype(int)
+
+# Zeros out unusable row
+vegas_prediction.ix[vegas_prediction['Open Line']=='L+12','Open Line']=0
+
+# Creates set of predictor columns (x) and column to be predicted (y)
+y_train = vegas_prediction.ix[~vegas_prediction['Open Line'].isnull(),'Open Line']
+x_train = vegas_prediction.ix[~vegas_prediction['Open Line'].isnull(),['Open Total','result']]
+
+# Create linear regression object
+regr = linear_model.LinearRegression()
+
+# Train the model using the training sets
+regr.fit(x_train, y_train)
+
+# Sets missing values to the predicted values
+predictions =  regr.predict(vegas_prediction.ix[vegas_prediction['Open Line'].isnull(),['Open Total','result']])
+vegas_prediction.ix[vegas_prediction['Open Line'].isnull(),'Open Line']=predictions
+############################################################################################
+
+### Imputes missing totals
+
+# Creates set of predictor columns (x) and column to be predicted (y)
+total_x = vegas_prediction.ix[(vegas_prediction['Open Total'] > 191.999) | (vegas_prediction['Open Total'] < 191.6) ,['Open Line','own_score','opponent_score','result']]
+total_y = vegas_prediction.ix[(vegas_prediction['Open Total'] > 191.999) | (vegas_prediction['Open Total'] < 191.6),'Open Total']
+
+# Create linear regression object
+regr = linear_model.LinearRegression()
+
+# Train the model using the training sets
+regr.fit(total_x, total_y)
+
+# Sets missing values to the predicted values
+total_predictions =  regr.predict(vegas_prediction.ix[(vegas_prediction['Open Total'] < 191.999) & (vegas_prediction['Open Total'] > 191.6) ,['Open Line','own_score','opponent_score','result']])
+vegas_prediction.ix[(vegas_prediction['Open Total'] < 191.999) & (vegas_prediction['Open Total'] > 191.6) ,'Open Total']=total_predictions
+
+# Sets values in vegas_up_to_2007 eqaul to newly imputed values from vegas_prediction
+vegas_up_to_2007.ix[:,'Open Total']=vegas_prediction.ix[:,'Open Total']
+vegas_up_to_2007.ix[:,'Close Total']=vegas_prediction.ix[:,'Open Total']
+vegas_up_to_2007.ix[:,'Open Line']=vegas_prediction['Open Line']
+vegas_up_to_2007.ix[:,'Close Line']=vegas_prediction['Open Line']
+###########################################################################
+
+# Read in 2016 Vegas Lines
+
+vegas_2016 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/2016-17_nba_vegas_lines_thru_april_15th.csv")
+vegas_2016.drop('2', axis=1, inplace=True)
+
+### Calculates game number for each game for each team
+
+# Initializes "Game Number" column
+vegas_2016['Game Number']=''
+
+# Calculates game number for each game for each team and puts value into Game Number column
+for team in vegas_2016['team_formatted'].unique():
+    count=0
+    for row in range(len(vegas_2016)):
+        if vegas_2016.ix[row,'team_formatted']==team:
+            count += 1
+            vegas_2016.ix[row,"Game Number"]=count
+        
+# # Fills new 'date_formatted', 'team_formatted' column
+# for row in range(len(vegas_2016)):
+#     if str(vegas_2016.ix[row,0])[len(str(vegas_2016.ix[row,0]))-1] == '6':
+#         if len(str(vegas_2016.ix[row,0])) == 9 :
+#             vegas_2016.ix[row,'date_formatted']="2016-"+str(vegas_2016.ix[row,0])[0:2]+"-0"+str(vegas_2016.iloc[row,0])[3]
+#         else:
+#             vegas_2016.ix[row,'date_formatted']="2016-"+str(vegas_2016.ix[row,0])[0:2]+"-"+str(vegas_2016.iloc[row,0])[3:4]
+#     else:
+#         if len(str(vegas_2016.ix[row,0])) == 9 :
+#             vegas_2016.ix[row,'date_formatted']="2017-0"+str(vegas_2016.ix[row,0])[0:1]+"-0"+str(vegas_2016.iloc[row,0])[2]
+#         else:
+#             vegas_2016.ix[row,'date_formatted']="2017-0"+str(vegas_2016.ix[row,0])[0:1]+"-"+str(vegas_2016.iloc[row,0])[2:3]
+       
+vegas_2016['date_formatted']=vegas_2016.Date
+vegas_2016.drop('Date',axis=1,inplace=True)
+
+# Creating new columns to merge with other vegas lines
+vegas_2016['Close Total'] = vegas_2016.Total
+vegas_2016['Open Total'] = vegas_2016.Total
+vegas_2016['Close Line'] = vegas_2016.Line
+vegas_2016['Open Line'] = vegas_2016.Line
+vegas_2016['season'] = 2016
+vegas_2016['Location'] = np.where(vegas_2016['location_@'] == 1, 0, 1)
+
+
+vegas_2016.to_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/2016-17_nba_vegas_lines_thru_april_15th_wrote_to_fix_date.csv")
+
+# set(vegas_up_to_2007.columns) - set(vegas_2016.columns)
+
+vegas_2016 = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/Historical NBA Vegas Odds/2016-17_nba_vegas_lines_thru_april_15th_wrote_to_fix_date.csv")
+
+
+###########################################################################
+
+# Drops unwanted columns
+
+vegas_up_to_2007 = vegas_up_to_2007.drop(['ML','OU', 'OU Result', 'OU_Result','Opponent', 'Date','Unnamed: 0', 'W/L', 'Year','Season', 'Spread', 'Spread_Outcome', 'Team', 'Unnamed: 0','W/L','Result','Location'],axis=1)
+
+vegas_from_2008_through_2015 = vegas_from_2008_through_2015.drop(['Unnamed: 0','Date','Rot','1st','2nd','3rd','4th','Final','Open','Close','ML','VH','Team'],axis=1)
+
+# Concatenates all vegas line data into one dataframe
+all_vegas = vegas_up_to_2007.append(vegas_from_2008_through_2015)
+
+# Appending 2016 lines --> new
+all_vegas = all_vegas.append(vegas_2016)
+
+all_vegas.reset_index(drop=True, inplace=True)
+##########################################################################
+
+# Converts dytpes to float for creation of categorical variables
+
+# all_vegas['Close Line'] = all_vegas['Close Line'].astype(float)
+# all_vegas['Open Line'] = all_vegas['Open Line'].astype(float)
+# all_vegas['Open Total'] = all_vegas['Open Total'].astype(float)
+# all_vegas['Close Total'] = all_vegas['Close Total'].astype(float)
+#######################################################################
+### Creates categorical variables for vegas lines ###
+
+# Creates 'avg_line' to be used for creation of categorical variables --> use average b/c it will be nearly impossible to have final vegas line in model, use average to get line in between initial and final line, most representative of what will be supplied to model
+all_vegas['avg_line'] = (all_vegas['Open Line'].astype(float) + all_vegas['Close Line'].astype(float))/2
+
+# Close Game
+all_vegas['close_game'] = np.array([1 if math.fabs(all_vegas.ix[row,'avg_line']) <= 3 else 0 for row in range(len(all_vegas))])
+
+# Small Win
+all_vegas['small_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -3) & (all_vegas.ix[row,'avg_line'] >= -6.5) else 0 for row in range(len(all_vegas))])
+
+# Medium Win
+all_vegas['medium_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -6.5) & (all_vegas.ix[row,'avg_line'] >= -11) else 0 for row in range(len(all_vegas))])
+
+# Big Win
+all_vegas['big_win'] = np.array([1 if (all_vegas.ix[row,'avg_line'] < -11) else 0 for row in range(len(all_vegas))])
+
+# Small Loss
+all_vegas['small_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 3) & (all_vegas.ix[row,'avg_line'] < 6.5) else 0 for row in range(len(all_vegas))])
+
+# Medium Win
+all_vegas['medium_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 6.5) & (all_vegas.ix[row,'avg_line'] <= 11) else 0 for row in range(len(all_vegas))])
+
+# Big Win
+all_vegas['big_loss'] = np.array([1 if (all_vegas.ix[row,'avg_line'] > 11) else 0 for row in range(len(all_vegas))])
+
+########################################################################
+
+########################################################################
+
+# Not merging on date b/c it doesnt work that way, probably due to formatting issues
+all_seasons_with_vegas = pd.merge(all_seasons,all_vegas,left_on=['Tm','season','Game_Number'],right_on=['team_formatted','season','Game Number'],how='outer')
+
+# if len(all_seasons) != len(all_seasons_with_vegas):
+#     print('SOMETHING IS WRONG!!!')
+
+# Imputes missing lines for Phoenix Suns playoff games in 2008 by grabbin the values from the corresponding Spurs rows
+if (np.max(np.where(all_seasons_with_vegas['Close Total'].isnull())) == 76234) & (np.min(np.where(all_seasons_with_vegas['Close Total'].isnull())) == 76204):
+    for row in np.nditer(np.where(all_seasons_with_vegas['Close Total'].isnull())):
+        all_seasons_with_vegas.ix[int(row),'Open Line']=-1*np.mean(all_seasons_with_vegas.ix[(all_seasons_with_vegas.Date==all_seasons_with_vegas.ix[int(row),'Date']) & (all_seasons_with_vegas.Tm=='SAS'),'Open Line'])
+        all_seasons_with_vegas.ix[int(row),'Close Line']=-1*np.mean(all_seasons_with_vegas.ix[(all_seasons_with_vegas.Date==all_seasons_with_vegas.ix[int(row),'Date']) & (all_seasons_with_vegas.Tm=='SAS'),'Close Line'])
+        all_seasons_with_vegas.ix[int(row),'Open Total']=np.mean(all_seasons_with_vegas.ix[(all_seasons_with_vegas.Date==all_seasons_with_vegas.ix[int(row),'Date']) & (all_seasons_with_vegas.Tm=='SAS'),'Open Total'])
+        all_seasons_with_vegas.ix[int(row),'Close Total']=np.mean(all_seasons_with_vegas.ix[(all_seasons_with_vegas.Date==all_seasons_with_vegas.ix[int(row),'Date']) & (all_seasons_with_vegas.Tm=='SAS'),'Close Total'])
+        all_seasons_with_vegas.ix[int(row),'Game Number']=np.mean(all_seasons_with_vegas.ix[(all_seasons_with_vegas.Date==all_seasons_with_vegas.ix[int(row),'Date']) & (all_seasons_with_vegas.Tm=='SAS'),'Game Number'])
+else:
+    print('More than just Suns playoff games from 2007 seasons missing')
+        
+# Removes left over vegas lines from outer merge
+all_seasons_with_vegas_no_extras = all_seasons_with_vegas[~all_seasons_with_vegas['Date'].isnull()]
+
+all_seasons_with_vegas_no_extras.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/4_this_and_all_szns_days_games_categorical_w_career_stats_vegas.csv')
+
+

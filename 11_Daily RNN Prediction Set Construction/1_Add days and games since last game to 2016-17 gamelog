@@ -1,0 +1,193 @@
+import pandas as pd
+import numpy as np
+import time
+import datetime
+import re
+
+# Read in this_season data set
+# all_seasons=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/all_seasons.csv")
+
+this_season=pd.read_csv("/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/2016-2017_gamelog_entering_4_16.csv")
+this_season.drop(['Unnamed: 0','index'],axis=1,inplace=True)
+
+# Create season column
+this_season['season'] = 2016
+
+### Creating game_number column ####
+
+this_season['count'] = this_season.apply(lambda this_season: 1 if '*' in this_season.Date else 0, axis = 1)
+
+# Removes asterisk from the end of dates of playoff games
+for row in range(len(this_season)):
+    if this_season.ix[row,"count"]==1:
+        this_season.ix[row,'Date']=str(this_season.ix[row,'Date'])[:-1]
+
+# Loop to create game number column
+
+for team in this_season.Tm.unique():
+    team_mask = this_season.Tm==team
+    dates = this_season.ix[team_mask,'Date'].unique()
+    dates.sort()
+    for game_number in range(len(dates)):
+        date_mask = this_season.Date==dates[game_number]
+        this_season.ix[(date_mask) & (team_mask),"Game_Number"]=game_number+1
+
+###################################################################################
+
+##### Changing names of duplicate players in this_season
+
+### Duplicate players:
+# Marcus Williams
+# Dee Brown
+# Tim Hardaway Sr.
+# Chris Johnson
+# Tony Mitchell
+# Glen Rice Jr.
+# Glenn Robinson Jr.
+# Chris Wright
+
+# Using to double check duplicate status
+# test = this_season.ix[this_season.Player=='Chris Wright',['Player','Tm','Date']]
+# test.Tm.unique()
+
+# Marcus Williams
+
+marcus_williams_mask = (this_season.Player == "Marcus Williams") & ((this_season.Tm == "SAS") | (this_season.Tm == "LAC" ))
+
+this_season.ix[marcus_williams_mask,"Player"] = "Marcus Elliott Williams"
+
+# Dee Brown
+
+dee_brown_mask = (this_season.Player == "Dee Brown") & ((this_season.Tm == "UTA") | (this_season.Tm == "WAS") | (this_season.Tm == "PHO"))
+
+this_season.ix[dee_brown_mask,"Player"] = "Dee Daniel Brown"
+
+# Tim Hardaway Sr.
+
+hardaway_mask = (this_season.Player == "Tim Hardaway") & ((this_season.Tm == "MIA") | (this_season.Tm == "GSW") | (this_season.Tm == "DAL") | (this_season.Tm == "DEN") | (this_season.Tm == "IND"))
+
+this_season.ix[hardaway_mask,"Player"] = "Tim Hardaway Sr."
+
+# Chris Johnson
+
+# Two masks b/c other CJ also played for Boston
+
+cj_mask_1 = (this_season.Player == "Chris Johnson") & ((this_season.Tm == "BOS") & (this_season.season == 2010))
+
+this_season.ix[cj_mask_1,"Player"] = "Chris LSU Johnson"
+
+cj_mask_2 = (this_season.Player == "Chris Johnson") & ((this_season.Tm == 'POR') | (this_season.Tm == "NOH") | (this_season.Tm == "MIN"))
+
+this_season.ix[cj_mask_2,"Player"] = "Chris LSU Johnson"
+
+# Tony Mitchell
+
+mitchell_mask = (this_season.Player == "Tony Mitchell") & (this_season.Tm == "DET")
+
+this_season.ix[mitchell_mask,"Player"] = "Tony Anthony Mitchell"
+
+# Glen Rice Jr.
+
+rice_mask = (this_season.Player == "Glen Rice") & (this_season.Tm == "WAS")
+
+this_season.ix[rice_mask,"Player"] = "Glen Rice Jr."
+
+# Glenn Robinson Jr.
+
+# Two masks b/c both G-Robs played for PHI
+
+robinson_mask_1 = (this_season.Player == "Glenn Robinson") & ((this_season.Tm == "PHI") & (this_season.season == 2003))
+
+this_season.ix[robinson_mask_1,"Player"] = "Glenn Robinson Jr."
+
+robinson_mask_2 = (this_season.Player == "Glenn Robinson") & ((this_season.Tm == "MIL") | (this_season.Tm =="ATL") | (this_season.Tm == "SAS"))
+
+this_season.ix[robinson_mask_2,"Player"] = "Glenn Robinson Jr."
+
+# Chris Wright
+
+wright_mask = (this_season.Player == "Chris Wright") & ((this_season.Tm == 'DAL'))
+
+this_season.ix[wright_mask,"Player"] = "Chris Georgetown Wright"
+
+###########################################################################################
+###########################################################################################
+
+### Reads in dataset of all players to play in NBA history with relevant duplicates fixed
+
+players_full = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/every_player_in_nba_history_no_duplicates_for_1998_plus.csv")
+
+players_full.ix[(players_full.Player=='David Lee') & (players_full.College == 'University of San Francisco'),'Player'] = 'David San Fran Lee'
+
+players_full.ix[(players_full.Player=='Gerald Henderson') & (players_full.College == 'Virginia Commonwealth University'),'Player'] = 'Gerald VCU Henderson'
+
+players_full.ix[(players_full.Player=='Mike Dunleavy') & (players_full.College == 'University of South Carolina'),'Player'] = 'Mike SCAR Dunleavy'
+
+# Creates list of players who started career prior to beginning of all_season data set (1998-1999 season)
+
+too_old_mask = (players_full.From < 1999) 
+
+old_players_list = players_full.ix[too_old_mask,"Player"].unique()
+
+# Removes players in "old_players_list" (players that started their career before 1998-1999 season)
+
+this_season = this_season[~this_season.Player.isin(old_players_list)]  
+
+del players_full
+
+# Removes excess variables to free up memory
+del too_old_mask
+del cj_mask_1
+del cj_mask_2
+del dee_brown_mask
+del hardaway_mask
+del marcus_williams_mask
+del mitchell_mask
+del rice_mask
+del robinson_mask_1
+del robinson_mask_2
+del wright_mask
+del old_players_list
+
+###########################################################################################
+
+# Reset index to ensure indices start at 0
+this_season = this_season.reset_index()
+
+days_since_last_game = []
+for row in range(len(this_season)):
+    if row%10000==0:
+        print(row)
+    if (row == 0):
+        days_since_last_game.append(100)
+    elif (this_season.ix[row,'Player'] != this_season.ix[row-1,'Player']):
+        days_since_last_game.append(100)
+    else:
+        days_since_last_game.append(pd.to_datetime(this_season.ix[row,'Date']) - pd.to_datetime(this_season.ix[row-1,'Date']))
+
+# Won't be needed if I append a dummy game number in loop above
+# game_0 = [game for game in range(len(days_since_last_game)) if days_since_last_game[game] == 'first_game_of_season']
+
+# Removes datetime formatting from days_since_last_game_list
+formatted_days_list = [int(str(num_days).split()[0]) if len(str(num_days))<20 else 'first_game_of_season' for num_days in days_since_last_game]
+
+this_season['days_since_last_game']=np.array(formatted_days_list)
+
+############################################################################################################
+
+### Adding column for number of team games missed since last game
+
+games_since_last_game = []
+for row in range(len(this_season)):
+    if row%10000==0:
+        print(row)
+    if (row == 0):
+        games_since_last_game.append(int(this_season.ix[row,'Game_Number']) - 1)
+    elif (this_season.ix[row,'Player'] != this_season.ix[row-1,'Player']):
+        games_since_last_game.append(int(this_season.ix[row,'Game_Number']) - 1)
+    else:
+        games_since_last_game.append(int(this_season.ix[row,'Game_Number']) - int(this_season.ix[row-1,'Game_Number']) - 1)
+
+this_season['team_games_missed_since_last_game'] = np.array(games_since_last_game)
+
+this_season.to_csv('/Users/Miller/Documents/NBA 2016-17/NBA Player Gamelog Data/2016-2017/1_this_szn_days_and_games_since_last_game.csv')

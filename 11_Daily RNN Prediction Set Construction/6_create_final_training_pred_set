@@ -1,0 +1,196 @@
+import pandas as pd
+import numpy as np
+import datetime
+from sklearn import preprocessing
+from scipy.stats import boxcox
+from scipy import stats
+
+# every_game = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RNN Daily Prediction Set/1.this_and_all_szns_with_career_and_current_szn_stats.csv")
+
+# # Drops unnamed columns if they exist
+# if np.sum(every_game.columns.str.contains('Unnamed')) > 0:
+#     unnamed_cols = [col for col in every_game.columns if 'Unnamed' in col]
+#     unnamed_cols.extend(['Line','Location', 'Location_0', 'Opponent', 'Team', 'Total', 'count', 'location_@'])
+#     every_game.drop(unnamed_cols, axis=1, inplace=True)
+
+every_game = pd.read_csv("/Users/Miller/Documents/NBA 2016-17/RNN Daily Prediction Set/1.this_and_all_szns_with_career_and_current_szn_stats_cols_removed.csv")
+# if np.sum(every_game.columns.str.contains('Unnamed')) > 0:
+#     unnamed_cols = [col for col in every_game.columns if 'Unnamed' in col]
+    # every_game.drop(unnamed_cols, axis=1, inplace=True)
+
+every_game.sort_values('Date', inplace=True)
+
+### Need to filter data set by data before removing date column ###  
+
+## Need to fix dates from 2016-2017 (2017-xx-xx) --> xx-xx-2017
+
+every_game['date_new'] = every_game.Date
+
+# Fix date formatting
+for row in range(len(every_game)):
+    if (str(every_game.ix[row,'Date'])[:4]=='2016'):
+        if str(every_game.ix[row,'Date'])[8]=='0':
+            every_game.ix[row,'date_new']=str(every_game.ix[row,'Date'])[5:7]+"/0"+str(every_game.ix[row,'Date'])[9]+"/"+str(every_game.ix[row,'Date'])[0:4]
+        else:
+            every_game.ix[row,'date_new']=str(every_game.ix[row,'Date'])[5:7]+"/"+str(every_game.ix[row,'Date'])[8:10]+"/"+str(every_game.ix[row,'Date'])[0:4]
+    if (str(every_game.ix[row,'Date'])[:4]=='2017'):
+        every_game.ix[row,'date_new']=str(every_game.ix[row,'Date'])[6]+"/"+str(every_game.ix[row,'Date'])[8:]+"/"+str(every_game.ix[row,'Date'])[0:4]
+        
+every_game.sort_values('date_new', inplace=True)
+
+date_obj = pd.to_datetime(every_game.date_new)
+
+# Calculates vector of "season" column as datetime object
+season_vector = pd.to_datetime('1995', yearfirst=True, format="%Y")
+
+# Creates vector of datetime objects containing days since 1995 
+date_in_days = (date_obj - season_vector) 
+
+# Creates list of days since 1995 without datetime formatting
+formatted_age_list = [str(date)[:5] if len(str(date))==19 else str(date)[:4] for date in date_in_days]
+
+every_game['date_in_days']=formatted_age_list
+
+every_game.sort_values('date_in_days', inplace=True)
+
+# Create subsets to predict from
+games_on_3_10_or_prior = every_game[every_game.date_in_days.astype(int) <= 8104]
+
+games_on_4_8_or_prior = every_game[every_game.date_in_days.astype(int) <= 8133]
+
+games_on_4_11_or_prior = every_game[every_game.date_in_days.astype(int) <= 8136]
+
+
+
+
+#Sorts by player name then age
+every_game.sort_values(['Player','Age'],inplace=True)
+
+# Rather than removing, his position is being changed
+every_game.ix[every_game['Player']=='Briante Weber','Pos'] = 'G'
+every_game.ix[every_game['Player']=='David Nwaba','Pos'] = 'G'
+
+########################################################
+
+# Masks out players with normal bday notation
+normal_bdays = every_game[every_game.Age.str.len() == 6]
+
+# Masks out players with abnormal bday notation (e.g. 26 rather than 26-xxx)
+abnormal_bdays = every_game[every_game.Age.str.len() != 6]
+
+abnormal_bdays.reset_index(inplace=True)
+
+for row in range(len(abnormal_bdays)):
+    abnormal_bdays.ix[row, 'Age'] = str(abnormal_bdays.ix[row, 'Age']) + "-000"
+
+# Re-appends subsets of the original data set
+every_game = normal_bdays.append(abnormal_bdays)
+
+# Creates new age column
+every_game['age_in_days'] = every_game['Age'].map(lambda x: int(str(x[0:2]))*365+int(str(x[3:])))
+
+every_game.reset_index(inplace=True)
+
+#Sorts by player name then age
+every_game.sort_values(['Player','Age'],inplace=True)
+
+###############################################
+
+# Creates a one hot for when a player is traded
+every_game['new_team'] = 0
+every_game['new_szn'] = 0
+for row in range(1,len(every_game)):
+    if row % 10000 == 0:
+        print(row)
+    if (every_game.ix[row, 'Tm'] != every_game.ix[row-1, 'Tm']) & (every_game.ix[row, 'season'] == every_game.ix[row-1, 'season']) & (every_game.ix[row, 'Player'] == every_game.ix[row-1, 'Player']):
+        every_game.ix[row,'new_team']=1
+    if every_game.ix[row, 'season'] != every_game.ix[row-1,'season']:
+        every_game.ix[row, 'new_szn']=1
+        
+
+# Removes unwanted columns
+
+cols_to_remove = ['Open Line', 'Open Total', 'avg_line', 'date_formatted', 'Date', 'Age', 'Tm', 'team_formatted', 'index', 'Opp', 'level_0', "Game Number"]
+
+next_szn_cols = [col for col in every_game.columns if "next_szn" in col]
+
+cols_to_remove.extend(next_szn_cols)
+
+every_game.drop(cols_to_remove, axis=1, inplace=True)
+    
+#Sorts by player name then age
+every_game.sort_values(['Player','age_in_days'],inplace=True)
+
+################################################
+
+# Engineering new features
+
+# every_game['career_fd_pts_per_min_x_career_fd_pts_per_game'] = every_game['career_fd_pts_per_game_entering_next_game']*every_game['career_fd_pts_per_min_entering_next_game']
+
+# every_game['career_mins_played_x_career_games_played'] = every_game['career_games_played_entering_next_game'] * every_game['career_mins_played_entering_next_game']
+
+# every_game['career_dk_pts_per_game_x_career_dk_pts'] = every_game['career_dk_pts_per_game_entering_next_game'] * every_game['career_dk_pts_entering_next_game']
+
+# every_game['career_dk_pts_per_min_x_career_dk_pts'] = every_game['career_dk_pts_per_min_entering_next_game'] * every_game['career_dk_pts_entering_next_game']
+
+# every_game['career_mins_played_x_career_dk_pts'] = every_game['career_mins_played_entering_next_game'] * every_game['career_dk_pts_entering_next_game']
+
+###############################################################################################
+
+# Creates one-hots for position and result
+every_game = pd.get_dummies(every_game,columns=['Pos','Result'])
+
+###############################################################################################
+###############################################################################################
+
+every_game.fillna(inplace=True, value=0.0)
+
+# cols_to_square_and_root = [col for col in every_game.columns if ('Player' not in col) & (col not in one_hot_cols) ]
+
+#################################################################################################
+
+# Takes box cox transformation of each column that is non-negative and squares all column with reasonably low enough max
+  
+# min_value_for_log_column = 0
+
+# for col in cols_to_square_and_root:
+    
+# #     every_game["{}_square_root".format(col)] = every_game[col]**(1/2)
+    
+# #     if (min(every_game[col]) >= 0) & (max(every_game[col]) < max_value_for_squared_column):  
+# #         every_game['{}_box_cox'.format(col)] = boxcox(every_game[col]+.0001)[0]
+    
+#     if min(every_game[col]) > min_value_for_squared_column:
+#         every_game["{}_log".format(col)] = np.log(every_game[col])
+
+################################################
+
+# #Creates square root version of every non-one hot feature and squared version of features that aren't too large
+# for col in cols_to_square_and_root:
+#     if "pts_per_min" not in col:
+#         if (col == 'career_fd_pts_per_min_x_career_fd_pts_per_game') or (col == 'career_mins_played_x_career_games_played') or (col == 'career_dk_pts_per_game_x_career_dk_pts') or (col == 'career_dk_pts_per_min_x_career_dk_pts') or (col == 'career_mins_played_x_career_dk_pts'):
+#             continue
+#         elif max(every_game[col]) > 1000:  
+#             print(col)
+#             every_game["{}_square_root".format(col)] = every_game[col]**(1/2)
+#         else:
+#             every_game["{}_square_root".format(col)] = every_game[col]**(1/2)
+#             every_game["{}_squared".format(col)] = every_game[col]**2
+
+# square_root_cols = [col for col in every_game.columns if 'square_root' in col]
+
+# # Fills all NA square root values (original values were negative) with -1
+# every_game[square_root_cols] = every_game[square_root_cols].fillna(value=0)
+
+#############################
+
+##### Cant do this before squaring
+
+# Scales and centers all variables except for fd_pts and dk_pts (targets)
+cols_to_preprocess = [col for col in every_game.columns if ('Player' not in col) & (col != 'dk_pts') & (col != 'fd_pts')]
+
+every_game[cols_to_preprocess] = preprocessing.scale(every_game[cols_to_preprocess])
+
+every_game.to_csv('/Users/Miller/Documents/NBA 2016-17/RNN Daily Prediction Set/2_all_games_ready_for_training_and_prediction.csv')
+
+
